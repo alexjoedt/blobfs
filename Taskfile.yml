@@ -1,0 +1,70 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Run tests and verify module
+    cmds:
+      - task: test
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - go fmt ./...
+
+  tidy:
+    desc: Format code and tidy dependencies
+    cmds:
+      - task: fmt
+      - go mod tidy
+
+  test:
+    desc: Run all tests with coverage
+    cmds:
+      - go test -v -race -coverprofile=coverage.out ./...
+      - go tool cover -func=coverage.out
+
+  test-short:
+    desc: Run tests without coverage
+    cmds:
+      - go test -v ./...
+
+  bench:
+    desc: Run benchmarks
+    cmds:
+      - go test -bench=. -benchmem ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: Run linters (requires golangci-lint)
+    cmds:
+      - golangci-lint run ./...
+
+  verify:
+    desc: Verify dependencies
+    cmds:
+      - go mod verify
+
+  check:
+    desc: Run all checks (fmt, vet, test)
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: test
+      - task: verify
+
+  clean:
+    desc: Clean test cache and coverage files
+    cmds:
+      - go clean -testcache
+      - rm -f coverage.out
+
+  examples:
+    desc: Run example programs
+    cmds:
+      - go run examples/storage.go
+      - go run examples/blob-example.go
+      - go run examples/custom-sharding.go
