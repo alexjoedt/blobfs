@@ -79,8 +79,9 @@ var (
 )
 
 type Storage struct {
-	root string
-	opts *Options
+	root     string
+	opts     *Options
+	blobsDir string // Computed path to blobs directory
 }
 
 func NewStorage(root string, opts ...OptionFunc) (*Storage, error) {
@@ -90,6 +91,7 @@ func NewStorage(root string, opts ...OptionFunc) (*Storage, error) {
 		FileMode:  defaultOpts.FileMode,
 		DirMode:   defaultOpts.DirMode,
 		ShardFunc: defaultOpts.ShardFunc,
+		BlobDir:   defaultOpts.BlobDir,
 	}
 
 	// Apply user-provided options
@@ -98,19 +100,29 @@ func NewStorage(root string, opts ...OptionFunc) (*Storage, error) {
 	}
 
 	root = filepath.Clean(root)
-	err := os.MkdirAll(filepath.Join(root, blobDirname), options.DirMode)
+
+	// Compute blobs directory path
+	blobsDir := root
+	if options.BlobDir != "" {
+		blobsDir = filepath.Join(root, options.BlobDir)
+	}
+
+	// Create blobs directory
+	err := os.MkdirAll(blobsDir, options.DirMode)
 	if err != nil {
 		return nil, fmt.Errorf("creating blobs directory: %w", err)
 	}
 
+	// Create temp directory (always at root level)
 	err = os.MkdirAll(filepath.Join(root, tempDirName), options.DirMode)
 	if err != nil {
 		return nil, fmt.Errorf("creating temp directory: %w", err)
 	}
 
 	return &Storage{
-		root: root,
-		opts: options,
+		root:     root,
+		opts:     options,
+		blobsDir: blobsDir,
 	}, nil
 }
 
@@ -320,9 +332,7 @@ func (bs *Storage) walkBlobs(ctx context.Context, prefix string, metaChan chan<-
 	defer close(metaChan)
 	defer close(errChan)
 
-	blobsDir := filepath.Join(bs.root, blobDirname)
-
-	err := filepath.WalkDir(blobsDir, func(path string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(bs.blobsDir, func(path string, d os.DirEntry, err error) error {
 		// Check for context cancellation
 		select {
 		case <-ctx.Done():
@@ -398,7 +408,7 @@ func (bs *Storage) Delete(ctx context.Context, key string) error {
 // filesystem performance degradation with large numbers of files.
 func (bs *Storage) createPathFromKey(key string) string {
 	shardPath := bs.opts.ShardFunc(key)
-	return filepath.Join(bs.root, blobDirname, shardPath)
+	return filepath.Join(bs.blobsDir, shardPath)
 }
 
 func (bs *Storage) readMeta(path string) (*Meta, error) {
@@ -482,11 +492,10 @@ func isValidKeyChar(r rune) bool {
 // Why stop at non-empty: Ensures we don't accidentally remove directories that
 // still contain other blobs.
 func (bs *Storage) cleanupEmptyDirs(path string) {
-	blobsDir := filepath.Join(bs.root, blobDirname)
 	parent := filepath.Dir(path)
 
 	// Walk up the tree until we reach the blobs directory
-	for parent != blobsDir && parent != bs.root && parent != "." && parent != "/" {
+	for parent != bs.blobsDir && parent != bs.root && parent != "." && parent != "/" {
 		// Check if directory is empty
 		entries, err := os.ReadDir(parent)
 		if err != nil || len(entries) > 0 {

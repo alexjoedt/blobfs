@@ -26,6 +26,7 @@ type Options struct {
 	FileMode  os.FileMode // Permission bits for blob data files
 	DirMode   os.FileMode // Permission bits for directories
 	ShardFunc ShardFunc   // Function to generate storage paths from keys
+	BlobDir   string      // Subdirectory for blob storage (empty string for root)
 }
 
 // OptionFunc is a functional option for configuring BlobStorage.
@@ -44,6 +45,23 @@ func WithFileMode(mode os.FileMode) OptionFunc {
 func WithDirMode(mode os.FileMode) OptionFunc {
 	return func(opts *Options) {
 		opts.DirMode = mode
+	}
+}
+
+// WithBlobDir sets the subdirectory name for blob storage within the root directory.
+// An empty string uses the root directory directly without a subdirectory.
+// Default is "blobs".
+//
+// Examples:
+//
+//	// Use custom subdirectory
+//	WithBlobDir("objects")
+//
+//	// Store blobs directly in root (no subdirectory)
+//	WithBlobDir("")
+func WithBlobDir(dir string) OptionFunc {
+	return func(opts *Options) {
+		opts.BlobDir = dir
 	}
 }
 
@@ -119,4 +137,5 @@ var defaultOpts = &Options{
 	FileMode:  0644,
 	DirMode:   0755,
 	ShardFunc: DefaultShardFunc,
+	BlobDir:   "blobs",
 }
