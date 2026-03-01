@@ -230,7 +230,7 @@ func (b *Blob) CommitAs(key string) error {
 	// Clean up on error
 	defer func() {
 		if b.err != nil && b.tmpPath != "" {
-			os.Remove(b.tmpPath)
+			_ = os.Remove(b.tmpPath)
 		}
 	}()
 
@@ -273,7 +273,7 @@ func (b *Blob) CommitAs(key string) error {
 		b.err = err
 		return b.err
 	}
-	defer mf.Close() // Ensure file is closed even if encoding fails
+	defer mf.Close() // nolint: errcheck // Ensure file is closed even if encoding fails
 
 	enc := json.NewEncoder(mf)
 	enc.SetIndent("", "  ")
@@ -314,7 +314,7 @@ func (b *Blob) Discard() error {
 
 	// Remove temp file
 	if b.tmpPath != "" {
-		os.Remove(b.tmpPath) // Ignore error - best effort cleanup
+		_= os.Remove(b.tmpPath) // Ignore error - best effort cleanup
 	}
 
 	return b.err

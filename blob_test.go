@@ -22,7 +22,7 @@ func TestBlob_Write(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard()
+		defer blob.Discard() // nolint: errcheck
 
 		data := []byte("Hello, World!")
 		n, err := blob.Write(data)
@@ -48,7 +48,7 @@ func TestBlob_Write(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard()
+		defer blob.Discard() // nolint: errcheck
 
 		writes := []string{"Hello", ", ", "World", "!"}
 		totalSize := 0
@@ -83,7 +83,7 @@ func TestBlob_IoCopy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard()
+		defer blob.Discard() // nolint: errcheck
 
 		content := "This is test content for io.Copy"
 		reader := strings.NewReader(content)
@@ -111,7 +111,7 @@ func TestBlob_IoCopy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard()
+		defer blob.Discard() // nolint: errcheck
 
 		// Generate 1MB of data
 		size := 1024 * 1024
@@ -149,10 +149,10 @@ func TestBlob_CommitAs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard()
+		defer blob.Discard() // nolint: errcheck
 
 		content := "Test content"
-		blob.Write([]byte(content))
+		blob.Write([]byte(content)) // nolint: errcheck
 
 		err = blob.CommitAs(key)
 		if err != nil {
@@ -190,7 +190,7 @@ func TestBlob_CommitAs(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		blob.Write([]byte("Test"))
+		blob.Write([]byte("Test")) // nolint: errcheck
 
 		err1 := blob.Discard()
 		err2 := blob.Discard()
@@ -215,8 +215,8 @@ func TestBlob_CommitAs(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		blob.Write([]byte("Initial"))
-		blob.Close()
+		_, _ = blob.Write([]byte("Initial")) // nolint: errcheck
+		_ = blob.Close()
 
 		_, err = blob.Write([]byte("After close"))
 		if err != ErrBlobClosed {
@@ -229,9 +229,9 @@ func TestBlob_CommitAs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard()
+		defer blob.Discard() // nolint: errcheck
 
-		blob.Write([]byte("Test"))
+		_, _ = blob.Write([]byte("Test"))
 
 		err = blob.CommitAs("")
 		if err != ErrEmptyKey {
@@ -246,8 +246,8 @@ func TestBlob_CommitAs(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		blob.Write([]byte("This should not be committed"))
-		blob.Close() // Just discards
+		_, _ = blob.Write([]byte("This should not be committed"))
+		_ = blob.Close() // Just discards
 
 		ctx := t.Context()
 		exists, _ := storage.Exists(ctx, key)
@@ -296,9 +296,9 @@ func TestBlob_ContentType(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer blob.Discard()
+			defer blob.Discard() // nolint: errcheck
 
-			blob.Write(tt.content)
+			_, _ = blob.Write(tt.content)
 			if err := blob.CommitAs(key); err != nil {
 				t.Fatal(err)
 			}
@@ -338,7 +338,7 @@ func TestBlob_PreserveCreatedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer blob1.Discard()
-	blob1.Write([]byte("Version 1"))
+	_, _ = blob1.Write([]byte("Version 1"))
 	blob1.CommitAs(key)
 
 	meta1, err := storage.Stat(ctx, key)
