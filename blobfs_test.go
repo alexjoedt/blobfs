@@ -13,7 +13,8 @@ import (
 func TestCreatePathFromKey(t *testing.T) {
 	expected := "test/blobs/b3/91/b39131e703bbbf2cb97a2c1b1e03c27778003d2c4cfbda994b7be8a97f1df296"
 	bs := &Storage{
-		root: "./test",
+		root:     "./test",
+		blobsDir: "test/blobs",
 		opts: &Options{
 			ShardFunc: DefaultShardFunc,
 		},
