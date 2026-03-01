@@ -72,7 +72,6 @@ package main
 import (
     "context"
     "log"
-    "os"
     "strings"
 
     "github.com/alexjoedt/blobfs"
@@ -105,20 +104,46 @@ func main() {
         }
     }
     
-    // List all blobs with "users/" prefix
-    iter := storage.List(ctx, "users/")
-    defer iter.Close()
-    
-    for iter.Next() {
-        meta := iter.Meta()
+    // Walk all blobs with "users/" prefix
+    err = storage.Walk(ctx, "users/", func(key string, meta *blobfs.Meta, err error) error {
+        if err != nil {
+            return err
+        }
         println("Found:", meta.Key, "Size:", meta.Size, "bytes")
-    }
-    
-    if err := iter.Err(); err != nil {
+        return nil
+    })
+    if err != nil {
         log.Fatal(err)
     }
 }
 ```
+
+### Walk all blobs (no prefix filter)
+
+```go
+err := storage.Walk(ctx, "", func(key string, meta *blobfs.Meta, err error) error {
+    if err != nil {
+        return err // or return nil to skip corrupted entries
+    }
+    fmt.Println(key, meta.Size)
+    return nil
+})
+```
+
+Return `filepath.SkipAll` from the callback to stop iteration early without an error.
+
+## API
+
+| Method | Description |
+|--------|-------------|
+| `Put(ctx, key, reader)` | Store a blob |
+| `Get(ctx, key)` | Retrieve a blob as `io.ReadCloser` |
+| `Delete(ctx, key)` | Delete a blob |
+| `Stat(ctx, key)` | Read metadata without fetching content |
+| `Exists(ctx, key)` | Check whether a blob exists |
+| `Walk(ctx, prefix, fn)` | Iterate blobs matching a prefix via callback |
+
+> **Deprecated:** `List` is deprecated in favour of `Walk` and will be removed in a future version.
 
 ## Available Options
 

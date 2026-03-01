@@ -434,6 +434,217 @@ func TestListMetadata(t *testing.T) {
 	}
 }
 
+func TestWalk(t *testing.T) {
+	os.RemoveAll("./test")
+
+	bs, err := NewStorage("./test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.RemoveAll("./test")
+	})
+
+	testData := map[string]string{
+		"users/alice/avatar.jpg":     "alice avatar",
+		"users/alice/profile.json":   "alice profile",
+		"users/bob/avatar.jpg":       "bob avatar",
+		"documents/2024/invoice.pdf": "invoice",
+		"documents/2025/report.pdf":  "report",
+		"temp/file.txt":              "temp file",
+	}
+
+	for key, content := range testData {
+		if err := bs.Put(t.Context(), key, strings.NewReader(content)); err != nil {
+			t.Fatalf("failed to put %s: %v", key, err)
+		}
+	}
+
+	tests := []struct {
+		name     string
+		prefix   string
+		expected []string
+	}{
+		{
+			name:   "walk all",
+			prefix: "",
+			expected: []string{
+				"users/alice/avatar.jpg",
+				"users/alice/profile.json",
+				"users/bob/avatar.jpg",
+				"documents/2024/invoice.pdf",
+				"documents/2025/report.pdf",
+				"temp/file.txt",
+			},
+		},
+		{
+			name:   "walk users",
+			prefix: "users/",
+			expected: []string{
+				"users/alice/avatar.jpg",
+				"users/alice/profile.json",
+				"users/bob/avatar.jpg",
+			},
+		},
+		{
+			name:   "walk alice",
+			prefix: "users/alice/",
+			expected: []string{
+				"users/alice/avatar.jpg",
+				"users/alice/profile.json",
+			},
+		},
+		{
+			name:     "walk documents 2024",
+			prefix:   "documents/2024/",
+			expected: []string{"documents/2024/invoice.pdf"},
+		},
+		{
+			name:     "no match",
+			prefix:   "nonexistent/",
+			expected: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var found []string
+			err := bs.Walk(t.Context(), tt.prefix, func(key string, meta *Meta, err error) error {
+				if err != nil {
+					return err
+				}
+				found = append(found, key)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("walk error: %v", err)
+			}
+
+			for _, expected := range tt.expected {
+				if !contains(found, expected) {
+					t.Errorf("expected key %q not found in results", expected)
+				}
+			}
+			for _, key := range found {
+				if !contains(tt.expected, key) {
+					t.Errorf("unexpected key %q in results", key)
+				}
+			}
+		})
+	}
+}
+
+func TestWalkEarlyExit(t *testing.T) {
+	bs, err := NewStorage("./test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("walk-early-exit/file-%d.txt", i)
+		if err := bs.Put(t.Context(), key, strings.NewReader(fmt.Sprintf("content %d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count := 0
+	err = bs.Walk(t.Context(), "walk-early-exit/", func(key string, meta *Meta, err error) error {
+		if err != nil {
+			return err
+		}
+		count++
+		if count >= 3 {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk error: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("expected to visit 3 blobs, got %d", count)
+	}
+}
+
+func TestWalkContextCancellation(t *testing.T) {
+	bs, err := NewStorage("./test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("walk-cancel-test/file-%d.txt", i)
+		if err := bs.Put(t.Context(), key, strings.NewReader(fmt.Sprintf("content %d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	count := 0
+	err = bs.Walk(ctx, "walk-cancel-test/", func(key string, meta *Meta, err error) error {
+		if err != nil {
+			return err
+		}
+		count++
+		if count >= 2 {
+			cancel()
+		}
+		return nil
+	})
+
+	if err == nil {
+		t.Error("expected context cancellation error")
+	}
+}
+
+func TestWalkMetadata(t *testing.T) {
+	bs, err := NewStorage("./test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key := "walk-meta-test/file.txt"
+	content := "test content for walk metadata"
+	if err := bs.Put(t.Context(), key, strings.NewReader(content)); err != nil {
+		t.Fatal(err)
+	}
+
+	var got *Meta
+	err = bs.Walk(t.Context(), "walk-meta-test/", func(k string, meta *Meta, err error) error {
+		if err != nil {
+			return err
+		}
+		got = meta
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected metadata, got nil")
+	}
+	if got.Key != key {
+		t.Errorf("expected key %q, got %q", key, got.Key)
+	}
+	if got.Size != int64(len(content)) {
+		t.Errorf("expected size %d, got %d", len(content), got.Size)
+	}
+	if got.Sha256 == "" {
+		t.Error("expected sha256 hash")
+	}
+	if got.ContentType == "" {
+		t.Error("expected content type")
+	}
+	if got.CreatedAt.IsZero() {
+		t.Error("expected non-zero created time")
+	}
+	if got.ModifiedAt.IsZero() {
+		t.Error("expected non-zero modified time")
+	}
+}
+
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {

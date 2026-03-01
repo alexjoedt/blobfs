@@ -220,6 +220,8 @@ func (bs *Storage) Exists(ctx context.Context, key string) (bool, error) {
 // Why context in struct: While storing context in a struct is generally an
 // anti-pattern, here it's necessary for the iterator to respect cancellation
 // throughout its lifetime, not just at creation time.
+//
+// Deprecated: Use [Storage.Walk] instead. BlobResult and List will be removed in a future version.
 type BlobResult struct {
 	ctx    context.Context // This is an anti-pattern, but in this case it makes sense
 	cancel context.CancelFunc
@@ -295,9 +297,64 @@ func (br *BlobResult) Close() error {
 	return nil
 }
 
+// WalkFn is the callback signature for [Storage.Walk].
+// Return [filepath.SkipAll] to stop iteration early without an error.
+// Any other non-nil return value aborts the walk and is returned by Walk.
+type WalkFn func(key string, meta *Meta, err error) error
+
+// Walk calls fn for each blob whose key has the given prefix, in filesystem order.
+// An empty prefix matches all blobs.
+// Return [filepath.SkipAll] from fn to stop early without error.
+//
+// Unlike [Storage.List], Walk is synchronous and requires no cleanup.
+//
+// Example:
+//
+//	err := storage.Walk(ctx, "documents/", func(key string, meta *Meta, err error) error {
+//		if err != nil {
+//			return err
+//		}
+//		fmt.Println(key, meta.Size)
+//		return nil
+//	})
+func (bs *Storage) Walk(ctx context.Context, prefix string, fn WalkFn) error {
+	return filepath.WalkDir(bs.blobsDir, func(path string, d os.DirEntry, err error) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		if d.Name() != metaFileName {
+			return nil
+		}
+
+		meta, err := bs.readMeta(path)
+		if err != nil {
+			return fn("", nil, fmt.Errorf("reading metadata at %q: %w", path, err))
+		}
+
+		if prefix != "" && !strings.HasPrefix(meta.Key, prefix) {
+			return nil
+		}
+
+		return fn(meta.Key, meta, nil)
+	})
+}
+
 // List returns an iterator over all blobs matching the given prefix.
 // The prefix is matched against the original blob keys, not the hashed storage paths.
 // An empty prefix matches all blobs.
+//
+// Deprecated: Use [Storage.Walk] instead. List will be removed in a future version.
 //
 // The iterator must be closed when done to prevent resource leaks:
 //
@@ -327,56 +384,24 @@ func (bs *Storage) List(ctx context.Context, prefix string) *BlobResult {
 	return result
 }
 
-// walkBlobs walks the blob storage directory and sends matching blobs to the channel.
+// walkBlobs is an internal adapter used by the deprecated List method.
+// It calls Walk and fans results into the provided channels.
 func (bs *Storage) walkBlobs(ctx context.Context, prefix string, metaChan chan<- *Meta, errChan chan<- error) {
 	defer close(metaChan)
 	defer close(errChan)
 
-	err := filepath.WalkDir(bs.blobsDir, func(path string, d os.DirEntry, err error) error {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
+	err := bs.Walk(ctx, prefix, func(key string, meta *Meta, err error) error {
 		if err != nil {
 			return err
 		}
-
-		// Skip directories
-		if d.IsDir() {
-			return nil
-		}
-
-		// Only process meta.json files
-		if d.Name() != metaFileName {
-			return nil
-		}
-
-		// Read metadata
-		meta, err := bs.readMeta(path)
-		if err != nil {
-			// Log but don't fail entire iteration for corrupted metadata
-			return nil
-		}
-
-		// Check prefix match
-		if prefix != "" && !strings.HasPrefix(meta.Key, prefix) {
-			return nil
-		}
-
-		// Send to channel
 		select {
 		case metaChan <- meta:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-
 		return nil
 	})
 
-	// Send error if walk failed
 	if err != nil && !errors.Is(err, context.Canceled) {
 		select {
 		case errChan <- err:
