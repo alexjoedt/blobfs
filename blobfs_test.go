@@ -1,8 +1,11 @@
 package blobfs
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -643,6 +646,191 @@ func TestWalkMetadata(t *testing.T) {
 	}
 	if got.ModifiedAt.IsZero() {
 		t.Error("expected non-zero modified time")
+	}
+}
+
+func TestOpen(t *testing.T) {
+	bs, err := NewStorage("./test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	content := []byte("range read content for testing seeks")
+	key := "seek/test.bin"
+
+	// Put the content
+	err = bs.Put(ctx, key, bytes.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Open the blob
+	f, err := bs.Open(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	// Test seeking to offset 6
+	offset, err := f.Seek(6, io.SeekStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != 6 {
+		t.Errorf("expected seek offset 6, got %d", offset)
+	}
+
+	// Read from offset 6
+	got, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := content[6:]
+	if !bytes.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestOpenSeekEnd(t *testing.T) {
+	bs, err := NewStorage("./test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	content := []byte("test content for seek end")
+	key := "seek/end-test.bin"
+
+	// Put the content
+	err = bs.Put(ctx, key, bytes.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Open the blob
+	f, err := bs.Open(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	// Seek to 5 bytes before the end
+	offset, err := f.Seek(-5, io.SeekEnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedOffset := int64(len(content) - 5)
+	if offset != expectedOffset {
+		t.Errorf("expected seek offset %d, got %d", expectedOffset, offset)
+	}
+
+	// Read remaining 5 bytes
+	got, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := content[len(content)-5:]
+	if !bytes.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestOpenSeekCurrent(t *testing.T) {
+	bs, err := NewStorage("./test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	content := []byte("test content for seek current")
+	key := "seek/current-test.bin"
+
+	// Put the content
+	err = bs.Put(ctx, key, bytes.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Open the blob
+	f, err := bs.Open(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	// Read first 4 bytes
+	buf := make([]byte, 4)
+	n, err := f.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 4 {
+		t.Errorf("expected to read 4 bytes, got %d", n)
+	}
+
+	// Seek 2 bytes forward from current position
+	offset, err := f.Seek(2, io.SeekCurrent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != 6 {
+		t.Errorf("expected seek offset 6 (after reading 4 and seeking 2), got %d", offset)
+	}
+
+	// Read remaining content
+	got, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := content[6:]
+	if !bytes.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestOpenNotFound(t *testing.T) {
+	bs, err := NewStorage("./test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	// Try to open a non-existent blob
+	_, err = bs.Open(ctx, "nonexistent/blob.txt")
+	if err == nil {
+		t.Error("expected error for non-existent blob")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestOpenInvalidKey(t *testing.T) {
+	bs, err := NewStorage("./test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	// Try to open with empty key
+	_, err = bs.Open(ctx, "")
+	if err == nil {
+		t.Error("expected error for empty key")
+	}
+	if !errors.Is(err, ErrEmptyKey) {
+		t.Errorf("expected ErrEmptyKey, got %v", err)
+	}
+
+	// Try to open with path traversal attempt
+	_, err = bs.Open(ctx, "../../../etc/passwd")
+	if err == nil {
+		t.Error("expected error for path traversal attempt")
+	}
+	if !errors.Is(err, ErrInvalidKey) {
+		t.Errorf("expected ErrInvalidKey, got %v", err)
 	}
 }
 

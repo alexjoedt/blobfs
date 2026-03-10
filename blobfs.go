@@ -150,7 +150,15 @@ func (bs *Storage) Put(ctx context.Context, key string, r io.Reader) error {
 	return blob.CommitAs(key)
 }
 
-func (bs *Storage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+// Open returns a ReadSeekCloser for the blob identified by key.
+// The caller is responsible for closing the returned value.
+// Use this instead of Get when you need seeking or HTTP range serving:
+//
+//	f, err := storage.Open(ctx, "videos/clip.mp4")
+//	if err != nil { ... }
+//	defer f.Close()
+//	http.ServeContent(w, r, "clip.mp4", meta.ModifiedAt, f)
+func (bs *Storage) Open(ctx context.Context, key string) (io.ReadSeekCloser, error) {
 	if err := bs.validateKey(key); err != nil {
 		return nil, err
 	}
@@ -163,10 +171,14 @@ func (bs *Storage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("blob %q: %w", key, ErrNotFound)
 		}
-		return nil, fmt.Errorf("get blob %q: %w", key, err)
+		return nil, fmt.Errorf("open blob %q: %w", key, err)
 	}
 
 	return f, nil
+}
+
+func (bs *Storage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	return bs.Open(ctx, key)
 }
 
 func (bs *Storage) newTempFile() (*os.File, error) {
