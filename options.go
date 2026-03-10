@@ -23,10 +23,11 @@ type ShardFunc func(key string) string
 
 // Options configures BlobStorage behavior.
 type Options struct {
-	FileMode  os.FileMode // Permission bits for blob data files
-	DirMode   os.FileMode // Permission bits for directories
-	ShardFunc ShardFunc   // Function to generate storage paths from keys
-	BlobDir   string      // Subdirectory for blob storage (empty string for root)
+	FileMode      os.FileMode // Permission bits for blob data files
+	DirMode       os.FileMode // Permission bits for directories
+	ShardFunc     ShardFunc   // Function to generate storage paths from keys
+	BlobDir       string      // Subdirectory for blob storage (empty string for root)
+	VerifyOnRead  bool        // Enable hash verification on read operations
 }
 
 // OptionFunc is a functional option for configuring BlobStorage.
@@ -62,6 +63,28 @@ func WithDirMode(mode os.FileMode) OptionFunc {
 func WithBlobDir(dir string) OptionFunc {
 	return func(opts *Options) {
 		opts.BlobDir = dir
+	}
+}
+
+// WithVerifyOnRead enables automatic hash verification when reading blobs.
+// When enabled, Get wraps the returned reader with a verifyReader that computes
+// the SHA-256 hash on read and compares it against the stored hash on Close.
+// If the hashes don't match, Close returns ErrCorrupted.
+//
+// This makes blobfs safe for long-term archival and shared network storage,
+// detecting silent data corruption from bad sectors, bit rot, or memory errors.
+//
+// Default is false (no verification).
+//
+// Example:
+//
+//	storage, _ := NewStorage("/data", WithVerifyOnRead(true))
+//	rc, _ := storage.Get(ctx, "important/file.dat")
+//	defer rc.Close() // Returns error if data is corrupted
+//	io.Copy(dst, rc)
+func WithVerifyOnRead(v bool) OptionFunc {
+	return func(opts *Options) {
+		opts.VerifyOnRead = v
 	}
 }
 

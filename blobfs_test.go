@@ -834,6 +834,162 @@ func TestOpenInvalidKey(t *testing.T) {
 	}
 }
 
+func TestVerifyOnRead_Clean(t *testing.T) {
+	os.RemoveAll("./test")
+	t.Cleanup(func() {
+		os.RemoveAll("./test")
+	})
+
+	bs, err := NewStorage("./test", WithVerifyOnRead(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	key := "verify/clean.txt"
+	content := "hello"
+
+	// Put a blob
+	err = bs.Put(ctx, key, strings.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get the blob with verification enabled
+	rc, err := bs.Get(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+
+	// Read all content
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Close should succeed (hash matches)
+	if err := rc.Close(); err != nil {
+		t.Errorf("unexpected error on clean blob: %v", err)
+	}
+
+	// Verify content
+	if string(data) != content {
+		t.Errorf("content mismatch: expected %q, got %q", content, string(data))
+	}
+}
+
+func TestVerifyOnRead_Corrupted(t *testing.T) {
+	os.RemoveAll("./test")
+	t.Cleanup(func() {
+		os.RemoveAll("./test")
+	})
+
+	bs, err := NewStorage("./test", WithVerifyOnRead(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	key := "verify/corrupt.txt"
+	content := "hello"
+
+	// Put a blob
+	err = bs.Put(ctx, key, strings.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Corrupt the data file directly
+	storagePath := bs.createPathFromKey(key)
+	dataPath := filepath.Join(storagePath, blobFileName)
+	err = os.WriteFile(dataPath, []byte("XXXX!"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get the blob with verification enabled
+	rc, err := bs.Get(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Read all content (this is corrupted data)
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Close should fail with ErrCorrupted
+	err = rc.Close()
+	if err == nil {
+		t.Error("expected ErrCorrupted on corrupted blob")
+	}
+	if !errors.Is(err, ErrCorrupted) {
+		t.Errorf("expected ErrCorrupted, got %v", err)
+	}
+
+	// Verify we got the corrupted data
+	if string(data) != "XXXX!" {
+		t.Errorf("unexpected data: expected 'XXXX!', got %q", string(data))
+	}
+}
+
+func TestVerifyOnRead_Disabled(t *testing.T) {
+	os.RemoveAll("./test")
+	t.Cleanup(func() {
+		os.RemoveAll("./test")
+	})
+
+	// Create storage WITHOUT verification
+	bs, err := NewStorage("./test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	key := "verify/no-verify.txt"
+	content := "hello"
+
+	// Put a blob
+	err = bs.Put(ctx, key, strings.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Corrupt the data file directly
+	storagePath := bs.createPathFromKey(key)
+	dataPath := filepath.Join(storagePath, blobFileName)
+	err = os.WriteFile(dataPath, []byte("XXXX!"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get the blob WITHOUT verification enabled
+	rc, err := bs.Get(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+
+	// Read all content
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Close should succeed even though blob is corrupted
+	// (verification is disabled)
+	if err := rc.Close(); err != nil {
+		t.Errorf("unexpected error when verification is disabled: %v", err)
+	}
+
+	// Verify we got the corrupted data
+	if string(data) != "XXXX!" {
+		t.Errorf("unexpected data: expected 'XXXX!', got %q", string(data))
+	}
+}
+
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {

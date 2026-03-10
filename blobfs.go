@@ -53,9 +53,12 @@ package blobfs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -76,6 +79,7 @@ var (
 	ErrNotFound         = errors.New("blob with key not found")
 	ErrEmptyKey         = errors.New("key cannot be empty")
 	ErrInvalidKey       = errors.New("key contains invalid characters")
+	ErrCorrupted        = errors.New("blob content does not match stored hash")
 )
 
 type Storage struct {
@@ -178,7 +182,21 @@ func (bs *Storage) Open(ctx context.Context, key string) (io.ReadSeekCloser, err
 }
 
 func (bs *Storage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
-	return bs.Open(ctx, key)
+	rc, err := bs.Open(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+
+	if bs.opts.VerifyOnRead {
+		meta, err := bs.Stat(ctx, key)
+		if err != nil {
+			_ = rc.Close()
+			return nil, err
+		}
+		return newVerifyReader(rc, meta.Sha256), nil
+	}
+
+	return rc, nil
 }
 
 func (bs *Storage) newTempFile() (*os.File, error) {
@@ -221,6 +239,47 @@ func (bs *Storage) Exists(ctx context.Context, key string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// verifyReader wraps an io.ReadCloser and computes a hash as data is read.
+// On Close, it verifies that the computed hash matches the expected value,
+// returning ErrCorrupted if they don't match.
+type verifyReader struct {
+	rc       io.ReadCloser
+	hasher   hash.Hash
+	expected string // hex-encoded SHA-256 from meta
+}
+
+// newVerifyReader creates a new verifyReader that wraps rc.
+// The expected hash should be the hex-encoded SHA-256 value from meta.Sha256.
+func newVerifyReader(rc io.ReadCloser, expected string) *verifyReader {
+	return &verifyReader{
+		rc:       rc,
+		hasher:   sha256.New(),
+		expected: expected,
+	}
+}
+
+// Read reads from the underlying reader while computing the hash.
+func (v *verifyReader) Read(p []byte) (int, error) {
+	n, err := v.rc.Read(p)
+	if n > 0 {
+		_, _ = v.hasher.Write(p[:n])
+	}
+	return n, err
+}
+
+// Close closes the underlying reader and verifies the computed hash
+// against the expected value. Returns ErrCorrupted if they don't match.
+func (v *verifyReader) Close() error {
+	if err := v.rc.Close(); err != nil {
+		return err
+	}
+	got := hex.EncodeToString(v.hasher.Sum(nil))
+	if got != v.expected {
+		return fmt.Errorf("%w: stored=%s actual=%s", ErrCorrupted, v.expected, got)
+	}
+	return nil
 }
 
 // BlobResult provides an iterator over blob storage entries.
