@@ -282,9 +282,9 @@ func (b *Blob) CommitAs(key string) error {
 		return b.err
 	}
 
-	// Atomic rename to final location
+	// Commit data into the object store and hard-link into refs.
 	dataPath := filepath.Join(storagePath, blobFileName)
-	if err := os.Rename(b.tmpPath, dataPath); err != nil {
+	if err := b.storage.commitData(b.tmpPath, dataPath, contentHash); err != nil {
 		b.err = fmt.Errorf("committing blob: %w", err)
 		return b.err
 	}

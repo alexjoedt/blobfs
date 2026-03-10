@@ -94,7 +94,6 @@ func main() {
 
 	storage, err := blobfs.NewStorage(dir,
 		blobfs.WithShardFunc(dateShardFunc),
-		blobfs.WithBlobDir("archive"),
 	)
 	if err != nil {
 		log.Fatal(err)

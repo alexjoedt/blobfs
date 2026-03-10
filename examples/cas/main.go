@@ -39,10 +39,12 @@ func main() {
 	}
 	defer os.RemoveAll(dir)
 
-	// Configure storage with our CAS shard function and a custom blob directory
+	// Configure storage with our CAS shard function.
+	// Note: blobfs now includes a built-in object store that deduplicates
+	// content automatically regardless of the key used — the casShardFunc
+	// here simply controls the refs/ layout.
 	storage, err := blobfs.NewStorage(dir,
 		blobfs.WithShardFunc(casShardFunc),
-		blobfs.WithBlobDir("objects"),
 	)
 	if err != nil {
 		log.Fatal(err)

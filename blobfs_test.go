@@ -14,10 +14,10 @@ import (
 )
 
 func TestCreatePathFromKey(t *testing.T) {
-	expected := "test/blobs/b3/91/b39131e703bbbf2cb97a2c1b1e03c27778003d2c4cfbda994b7be8a97f1df296"
+	expected := "test/refs/b3/91/b39131e703bbbf2cb97a2c1b1e03c27778003d2c4cfbda994b7be8a97f1df296"
 	bs := &Storage{
-		root:     "./test",
-		blobsDir: "test/blobs",
+		root:    "./test",
+		refsDir: "test/refs",
 		opts: &Options{
 			ShardFunc: DefaultShardFunc,
 		},
@@ -198,10 +198,10 @@ func TestDeleteDoesNotRemoveBlobsDir(t *testing.T) {
 		t.Fatalf("delete failed: %v", err)
 	}
 
-	// Verify the blobs directory still exists
-	blobsDir := filepath.Join(bs.root, "blobs")
-	if _, err := os.Stat(blobsDir); os.IsNotExist(err) {
-		t.Error("blobs directory should not be removed by cleanup")
+	// Verify the refs directory still exists
+	refsDir := filepath.Join(bs.root, refsDirName)
+	if _, err := os.Stat(refsDir); os.IsNotExist(err) {
+		t.Error("refs directory should not be removed by cleanup")
 	}
 
 	// Verify root directory still exists

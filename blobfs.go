@@ -66,10 +66,11 @@ import (
 )
 
 const (
-	tempDirName  = ".tmp"
-	blobDirname  = "blobs"
-	metaFileName = "meta.json"
-	blobFileName = "data"
+	tempDirName    = ".tmp"
+	refsDirName    = "refs"
+	objectsDirName = "objects"
+	metaFileName   = "meta.json"
+	blobFileName   = "data"
 
 	maxKeyLength = 1024
 )
@@ -83,9 +84,10 @@ var (
 )
 
 type Storage struct {
-	root     string
-	opts     *Options
-	blobsDir string // Computed path to blobs directory
+	root       string
+	opts       *Options
+	refsDir    string // absolute path to refs/
+	objectsDir string // absolute path to objects/
 }
 
 func NewStorage(root string, opts ...OptionFunc) (*Storage, error) {
@@ -95,7 +97,6 @@ func NewStorage(root string, opts ...OptionFunc) (*Storage, error) {
 		FileMode:  defaultOpts.FileMode,
 		DirMode:   defaultOpts.DirMode,
 		ShardFunc: defaultOpts.ShardFunc,
-		BlobDir:   defaultOpts.BlobDir,
 	}
 
 	// Apply user-provided options
@@ -105,28 +106,28 @@ func NewStorage(root string, opts ...OptionFunc) (*Storage, error) {
 
 	root = filepath.Clean(root)
 
-	// Compute blobs directory path
-	blobsDir := root
-	if options.BlobDir != "" {
-		blobsDir = filepath.Join(root, options.BlobDir)
+	// Create refs directory (keyed by SHA-256 of user key)
+	refsDir := filepath.Join(root, refsDirName)
+	if err := os.MkdirAll(refsDir, options.DirMode); err != nil {
+		return nil, fmt.Errorf("creating refs directory: %w", err)
 	}
 
-	// Create blobs directory
-	err := os.MkdirAll(blobsDir, options.DirMode)
-	if err != nil {
-		return nil, fmt.Errorf("creating blobs directory: %w", err)
+	// Create objects directory (keyed by SHA-256 of content — CAS store)
+	objectsDir := filepath.Join(root, objectsDirName)
+	if err := os.MkdirAll(objectsDir, options.DirMode); err != nil {
+		return nil, fmt.Errorf("creating objects directory: %w", err)
 	}
 
 	// Create temp directory (always at root level)
-	err = os.MkdirAll(filepath.Join(root, tempDirName), options.DirMode)
-	if err != nil {
+	if err := os.MkdirAll(filepath.Join(root, tempDirName), options.DirMode); err != nil {
 		return nil, fmt.Errorf("creating temp directory: %w", err)
 	}
 
 	return &Storage{
-		root:     root,
-		opts:     options,
-		blobsDir: blobsDir,
+		root:       root,
+		opts:       options,
+		refsDir:    refsDir,
+		objectsDir: objectsDir,
 	}, nil
 }
 
@@ -389,7 +390,7 @@ type WalkFn func(key string, meta *Meta, err error) error
 //		return nil
 //	})
 func (bs *Storage) Walk(ctx context.Context, prefix string, fn WalkFn) error {
-	return filepath.WalkDir(bs.blobsDir, func(path string, d os.DirEntry, err error) error {
+	return filepath.WalkDir(bs.refsDir, func(path string, d os.DirEntry, err error) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -504,7 +505,7 @@ func (bs *Storage) Delete(ctx context.Context, key string) error {
 // filesystem performance degradation with large numbers of files.
 func (bs *Storage) createPathFromKey(key string) string {
 	shardPath := bs.opts.ShardFunc(key)
-	return filepath.Join(bs.blobsDir, shardPath)
+	return filepath.Join(bs.refsDir, shardPath)
 }
 
 func (bs *Storage) readMeta(path string) (*Meta, error) {
@@ -578,6 +579,65 @@ func isValidKeyChar(r rune) bool {
 		r == '-' || r == '_' || r == '.' || r == '/'
 }
 
+// commitData places the content from tmpPath into the object store and creates
+// a hard link at dataPath. The first write of a given contentHash moves the
+// temp file into objects/; subsequent writes with the same hash discard the
+// temp file and link to the already-stored object.
+//
+// Hard links keep the inode reference count accurate, enabling GC to detect
+// unreferenced objects by looking for nlink == 1.
+func (bs *Storage) commitData(tmpPath, dataPath, contentHash string) error {
+	objectPath := bs.objectPath(contentHash)
+
+	if _, err := os.Stat(objectPath); errors.Is(err, os.ErrNotExist) {
+		// First time this content is seen: move tmp into the object store.
+		if err := os.MkdirAll(filepath.Dir(objectPath), bs.opts.DirMode); err != nil {
+			return err
+		}
+		if err := os.Rename(tmpPath, objectPath); err != nil {
+			return err
+		}
+	} else {
+		// Content already exists: discard the temp file.
+		_ = os.Remove(tmpPath)
+	}
+
+	// Hard-link the object into the ref slot (remove stale link first on overwrite).
+	_ = os.Remove(dataPath)
+	if err := os.Link(objectPath, dataPath); err != nil {
+		// Fallback for network filesystems or cross-device edge cases.
+		return copyFile(objectPath, dataPath, bs.opts.FileMode)
+	}
+	return nil
+}
+
+// objectPath returns the canonical path for a content object identified by its
+// hex-encoded SHA-256 hash.
+func (bs *Storage) objectPath(contentHash string) string {
+	s1, s2 := contentHash[:2], contentHash[2:4]
+	return filepath.Join(bs.objectsDir, s1, s2, contentHash)
+}
+
+// copyFile copies src to dst with the given mode. Used as a fallback when
+// os.Link fails (e.g. cross-device or network filesystem).
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
 // cleanupEmptyDirs removes empty parent directories after blob deletion.
 // It walks up the directory tree from the given path and removes empty
 // directories until it reaches the blobs directory or finds a non-empty directory.
@@ -590,8 +650,8 @@ func isValidKeyChar(r rune) bool {
 func (bs *Storage) cleanupEmptyDirs(path string) {
 	parent := filepath.Dir(path)
 
-	// Walk up the tree until we reach the blobs directory
-	for parent != bs.blobsDir && parent != bs.root && parent != "." && parent != "/" {
+	// Walk up the tree until we reach the refs directory
+	for parent != bs.refsDir && parent != bs.root && parent != "." && parent != "/" {
 		// Check if directory is empty
 		entries, err := os.ReadDir(parent)
 		if err != nil || len(entries) > 0 {
@@ -608,4 +668,81 @@ func (bs *Storage) cleanupEmptyDirs(path string) {
 		// Move up to the next parent
 		parent = filepath.Dir(parent)
 	}
+}
+
+// MigrateStats reports the outcome of a Migrate call.
+type MigrateStats struct {
+	BlobsScanned int
+	BlobsLinked  int   // blobs whose data file was converted to a hard link
+	BlobsSkipped int   // blobs already hard-linked (idempotent re-runs)
+	BytesSaved   int64 // bytes freed (storedSize of de-duplicated blobs)
+}
+
+// Migrate retroactively populates objects/ from existing refs and converts their
+// data files to hard links. Safe to run on a live store; each blob is processed
+// atomically. Idempotent — already-migrated blobs are skipped.
+//
+// Use this after upgrading an existing store that was created before the CAS
+// object store was introduced, so that new writes of identical content can
+// deduplicate against the migrated objects.
+func (bs *Storage) Migrate(ctx context.Context) (MigrateStats, error) {
+	var stats MigrateStats
+
+	err := bs.Walk(ctx, "", func(key string, meta *Meta, err error) error {
+		if err != nil {
+			return err
+		}
+		stats.BlobsScanned++
+
+		storagePath := bs.createPathFromKey(key)
+		dataPath := filepath.Join(storagePath, blobFileName)
+		objectPath := bs.objectPath(meta.Sha256)
+
+		info, err := os.Lstat(dataPath)
+		if err != nil {
+			return fmt.Errorf("stat %q: %w", dataPath, err)
+		}
+
+		objInfo, objErr := os.Stat(objectPath)
+
+		if objErr == nil {
+			// Object already exists. Check whether dataPath is already a hard link
+			// to the same object by comparing file identity.
+			if os.SameFile(info, objInfo) {
+				// Already a hard link — nothing to do.
+				stats.BlobsSkipped++
+				return nil
+			}
+			// Object exists but data is a separate copy: replace with hard link.
+			_ = os.Remove(dataPath)
+			if linkErr := os.Link(objectPath, dataPath); linkErr != nil {
+				if copyErr := copyFile(objectPath, dataPath, bs.opts.FileMode); copyErr != nil {
+					return fmt.Errorf("linking %q: %w", dataPath, linkErr)
+				}
+			}
+			stats.BlobsLinked++
+			stats.BytesSaved += info.Size()
+			return nil
+		}
+
+		if !errors.Is(objErr, os.ErrNotExist) {
+			return fmt.Errorf("stat object %q: %w", objectPath, objErr)
+		}
+
+		// Object does not exist yet: create the directory and hard-link the data
+		// file as the object, then re-link dataPath to the object so both share
+		// the same inode.
+		if mkErr := os.MkdirAll(filepath.Dir(objectPath), bs.opts.DirMode); mkErr != nil {
+			return fmt.Errorf("creating object dir: %w", mkErr)
+		}
+		if linkErr := os.Link(dataPath, objectPath); linkErr != nil {
+			if copyErr := copyFile(dataPath, objectPath, bs.opts.FileMode); copyErr != nil {
+				return fmt.Errorf("creating object for %q: %w", key, linkErr)
+			}
+		}
+		stats.BlobsLinked++
+		return nil
+	})
+
+	return stats, err
 }

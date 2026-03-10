@@ -88,22 +88,22 @@ func TestWithShardFunc_FlatSharding(t *testing.T) {
 	// Verify flat structure
 	hash := sha256.Sum256([]byte(key))
 	hexHash := hex.EncodeToString(hash[:])
-	expectedPath := filepath.Join(dir, "blobs", hexHash, "data")
+	expectedPath := filepath.Join(dir, "refs", hexHash, "data")
 
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 		t.Errorf("expected file at %q does not exist", expectedPath)
 	}
 
-	// Verify no subdirectories (should only be blobs/ and the hash dir)
-	blobsDir := filepath.Join(dir, "blobs")
-	entries, err := os.ReadDir(blobsDir)
+	// Verify no subdirectories (should only be refs/ and the hash dir)
+	refsDir := filepath.Join(dir, "refs")
+	entries, err := os.ReadDir(refsDir)
 	if err != nil {
 		t.Fatalf("ReadDir failed: %v", err)
 	}
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
-			t.Errorf("expected only directories in blobs/, found file: %s", entry.Name())
+			t.Errorf("expected only directories in refs/, found file: %s", entry.Name())
 		}
 		// Should be the full hash, not 2 characters
 		if len(entry.Name()) != 64 {
@@ -141,7 +141,7 @@ func TestWithShardFunc_DateBasedSharding(t *testing.T) {
 	now := time.Now()
 	hash := sha256.Sum256([]byte(key))
 	hexHash := hex.EncodeToString(hash[:])
-	expectedPath := filepath.Join(dir, "blobs", now.Format("2006"), now.Format("01"), now.Format("02"), hexHash, "data")
+	expectedPath := filepath.Join(dir, "refs", now.Format("2006"), now.Format("01"), now.Format("02"), hexHash, "data")
 
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 		t.Errorf("expected file at %q does not exist", expectedPath)
@@ -175,7 +175,7 @@ func TestWithShardFunc_DeepSharding(t *testing.T) {
 	// Verify 3-level structure
 	hash := sha256.Sum256([]byte(key))
 	hexHash := hex.EncodeToString(hash[:])
-	expectedPath := filepath.Join(dir, "blobs", hexHash[:2], hexHash[2:4], hexHash[4:6], hexHash, "data")
+	expectedPath := filepath.Join(dir, "refs", hexHash[:2], hexHash[2:4], hexHash[4:6], hexHash, "data")
 
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 		t.Errorf("expected file at %q does not exist", expectedPath)
@@ -320,7 +320,7 @@ func TestWithShardFunc_MultipleOptions(t *testing.T) {
 	// Verify custom sharding was used
 	hash := sha256.Sum256([]byte(key))
 	hexHash := hex.EncodeToString(hash[:])
-	dataPath := filepath.Join(dir, "blobs", hexHash[:1], hexHash, "data")
+	dataPath := filepath.Join(dir, "refs", hexHash[:1], hexHash, "data")
 
 	info, err := os.Stat(dataPath)
 	if err != nil {
