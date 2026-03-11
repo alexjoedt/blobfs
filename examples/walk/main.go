@@ -79,6 +79,7 @@ func run() error {
 	}
 
 	// Walk with early termination using filepath.SkipAll
+	const maxWalkResults = 2
 	fmt.Fprintln(os.Stdout, "\n=== First 2 blobs (early stop) ===")
 	var seen int
 	err = storage.Walk(ctx, "", func(key string, _ *blobfs.Meta, err error) error {
@@ -87,7 +88,7 @@ func run() error {
 		}
 		fmt.Fprintf(os.Stdout, "  %s\n", key)
 		seen++
-		if seen >= 2 {
+		if seen >= maxWalkResults {
 			return filepath.SkipAll
 		}
 		return nil

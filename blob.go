@@ -165,10 +165,7 @@ func (b *Blob) Write(p []byte) (int, error) {
 
 	// Buffer first bytes for content type detection
 	if b.bufferUsed < len(b.buffer) {
-		toCopy := len(b.buffer) - b.bufferUsed
-		if toCopy > len(p) {
-			toCopy = len(p)
-		}
+		toCopy := min(len(b.buffer)-b.bufferUsed, len(p))
 		copy(b.buffer[b.bufferUsed:], p[:toCopy])
 		b.bufferUsed += toCopy
 	}

@@ -428,7 +428,7 @@ func TestBlob_ConcurrentWrites(t *testing.T) {
 	// Create multiple blobs concurrently
 	errChan := make(chan error, numBlobs)
 
-	for i := 0; i < numBlobs; i++ {
+	for i := range numBlobs {
 		go func(idx int) {
 			key := fmt.Sprintf("test/concurrent-%d.txt", idx)
 			blob, err := storage.NewBlob()
@@ -451,14 +451,14 @@ func TestBlob_ConcurrentWrites(t *testing.T) {
 	}
 
 	// Check all operations succeeded
-	for i := 0; i < numBlobs; i++ {
+	for i := range numBlobs {
 		if err := <-errChan; err != nil {
 			t.Errorf("blob %d failed: %v", i, err)
 		}
 	}
 
 	// Verify all blobs exist
-	for i := 0; i < numBlobs; i++ {
+	for i := range numBlobs {
 		key := fmt.Sprintf("test/concurrent-%d.txt", i)
 		exists, err := storage.Exists(ctx, key)
 		if err != nil {

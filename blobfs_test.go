@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -297,12 +298,12 @@ func TestWalk(t *testing.T) {
 			}
 
 			for _, expected := range tt.expected {
-				if !contains(found, expected) {
+				if !slices.Contains(found, expected) {
 					t.Errorf("expected key %q not found in results", expected)
 				}
 			}
 			for _, key := range found {
-				if !contains(tt.expected, key) {
+				if !slices.Contains(tt.expected, key) {
 					t.Errorf("unexpected key %q in results", key)
 				}
 			}
@@ -316,7 +317,7 @@ func TestWalkEarlyExit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := fmt.Sprintf("walk-early-exit/file-%d.txt", i)
 		if err := bs.Put(t.Context(), key, strings.NewReader(fmt.Sprintf("content %d", i))); err != nil {
 			t.Fatal(err)
@@ -348,7 +349,7 @@ func TestWalkContextCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := fmt.Sprintf("walk-cancel-test/file-%d.txt", i)
 		if err := bs.Put(t.Context(), key, strings.NewReader(fmt.Sprintf("content %d", i))); err != nil {
 			t.Fatal(err)
@@ -760,13 +761,4 @@ func TestVerifyOnRead_Disabled(t *testing.T) {
 	if string(data) != "XXXX!" {
 		t.Errorf("unexpected data: expected 'XXXX!', got %q", string(data))
 	}
-}
-
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
 }
