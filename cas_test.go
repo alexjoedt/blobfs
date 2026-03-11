@@ -391,10 +391,10 @@ func TestGC_MultipleOrphans(t *testing.T) {
 func writeTestMeta(path string, meta *Meta) error {
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return err //nolint: wrapcheck // test helper returns raw create error for concise failures
 	}
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
-	return enc.Encode(meta)
+	return enc.Encode(meta) //nolint: wrapcheck // test helper returns raw create error for concise failures
 }

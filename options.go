@@ -167,7 +167,7 @@ func BucketShardFunc(key string) string {
 // Why these defaults: 0644 for files allows owner to modify, others to read.
 // 0755 for directories allows traversal while protecting against modification.
 var defaultOpts = &Options{ //nolint:gochecknoglobals // package-level defaults used by NewStorage
-	FileMode:  0644, //nolint: mnd
-	DirMode:   0755, //nolint: mnd
+	FileMode:  0644, //nolint:mnd // default file permission for stored blobs
+	DirMode:   0755, //nolint:mnd // default directory permission for blob storage
 	ShardFunc: DefaultShardFunc,
 }

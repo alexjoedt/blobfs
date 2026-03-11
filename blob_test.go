@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestBlob_Write(t *testing.T) { //nolint: gocognit
+func TestBlob_Write(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage, err := NewStorage(tmpDir)
 	if err != nil {
@@ -72,7 +72,7 @@ func TestBlob_Write(t *testing.T) { //nolint: gocognit
 	})
 }
 
-func TestBlob_IoCopy(t *testing.T) { //nolint: gocognit
+func TestBlob_IoCopy(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage, err := NewStorage(tmpDir)
 	if err != nil {
@@ -258,7 +258,7 @@ func TestBlob_CommitAs(t *testing.T) { //nolint: gocognit
 	})
 }
 
-func TestBlob_ContentType(t *testing.T) { //nolint: gocognit
+func TestBlob_ContentType(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage, err := NewStorage(tmpDir)
 	if err != nil {
@@ -513,7 +513,7 @@ func TestBlob_FmtFprintf(t *testing.T) {
 	}
 }
 
-func TestBlob_Hash(t *testing.T) { //nolint: gocognit
+func TestBlob_Hash(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage, err := NewStorage(tmpDir)
 	if err != nil {
@@ -616,7 +616,7 @@ func TestBlob_Hash(t *testing.T) { //nolint: gocognit
 	})
 }
 
-func TestBlob_Meta(t *testing.T) { //nolint: gocognit
+func TestBlob_Meta(t *testing.T) { //nolint: gocognit,cyclop,golines // table-driven subtests intentionally increase complexity for full metadata coverage
 	tmpDir := t.TempDir()
 	storage, err := NewStorage(tmpDir)
 	if err != nil {
