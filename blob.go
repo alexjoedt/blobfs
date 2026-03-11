@@ -1,12 +1,14 @@
 package blobfs
 
 import (
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -67,6 +69,10 @@ type Blob struct {
 
 	contentType string
 
+	// Compression
+	compressWriter io.WriteCloser // non-nil when compression is active
+	storedSize     int64          // bytes actually written to tmpFile (after compression)
+
 	// Metadata
 	// Cached after commit to avoid re-reading the meta file.
 	meta *Meta
@@ -120,6 +126,10 @@ func (bs *Storage) NewBlob() (*Blob, error) {
 		buffer:  make([]byte, 512),
 	}
 
+	if bs.opts.Compression == CodecGzip {
+		blob.compressWriter = gzip.NewWriter(tmpFile)
+	}
+
 	return blob, nil
 }
 
@@ -149,6 +159,21 @@ func (b *Blob) Write(p []byte) (n int, err error) {
 		}
 		copy(b.buffer[b.bufferUsed:], p[:toCopy])
 		b.bufferUsed += toCopy
+	}
+
+	if b.compressWriter != nil {
+		// Hash original (uncompressed) bytes before compression.
+		if _, err := b.hasher.Write(p); err != nil {
+			b.err = err
+			return 0, err
+		}
+		written, err := b.compressWriter.Write(p)
+		if err != nil {
+			b.err = err
+			return written, err
+		}
+		b.size += int64(len(p))
+		return len(p), nil
 	}
 
 	// Write to temp file and hasher
@@ -219,6 +244,19 @@ func (b *Blob) CommitAs(key string) error {
 	b.closed = true
 	b.committed = true
 
+	// Flush and close the compress writer before closing the temp file.
+	if b.compressWriter != nil {
+		if err := b.compressWriter.Close(); err != nil {
+			b.err = err
+			return b.err
+		}
+	}
+
+	// Capture the actual on-disk (potentially compressed) size.
+	if info, err := b.tmpFile.Stat(); err == nil {
+		b.storedSize = info.Size()
+	}
+
 	// Ensure temp file is closed
 	if b.tmpFile != nil {
 		if err := b.tmpFile.Close(); err != nil {
@@ -252,8 +290,10 @@ func (b *Blob) CommitAs(key string) error {
 	meta := &Meta{
 		Key:         key,
 		Size:        b.size,
+		StoredSize:  b.storedSize,
 		Sha256:      contentHash,
 		ContentType: b.contentType,
+		Compression: string(b.storage.opts.Compression),
 		CreatedAt:   createdAt,
 		ModifiedAt:  time.Now(),
 	}

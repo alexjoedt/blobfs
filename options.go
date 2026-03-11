@@ -21,12 +21,23 @@ import (
 // Example: For key "users/avatar.jpg", might return "blobs/a3/f2/a3f29d4e8c..."
 type ShardFunc func(key string) string
 
+// Codec identifies a compression algorithm used for stored blobs.
+type Codec string
+
+const (
+	// CodecNone disables compression (default).
+	CodecNone Codec = ""
+	// CodecGzip enables gzip compression.
+	CodecGzip Codec = "gzip"
+)
+
 // Options configures BlobStorage behavior.
 type Options struct {
 	FileMode     os.FileMode // Permission bits for blob data files
 	DirMode      os.FileMode // Permission bits for directories
 	ShardFunc    ShardFunc   // Function to generate storage paths from keys
 	VerifyOnRead bool        // Enable hash verification on read operations
+	Compression  Codec       // Compression codec for new blobs (CodecNone disables)
 }
 
 // OptionFunc is a functional option for configuring BlobStorage.
@@ -67,6 +78,21 @@ func WithDirMode(mode os.FileMode) OptionFunc {
 func WithVerifyOnRead(v bool) OptionFunc {
 	return func(opts *Options) {
 		opts.VerifyOnRead = v
+	}
+}
+
+// WithCompression enables transparent compression for all newly stored blobs.
+// Blobs are stored compressed; Get decompresses transparently on read.
+// The codec is recorded in each blob's metadata, so existing blobs written
+// without compression are still readable after enabling WithCompression.
+//
+// Important: changing the codec on an existing storage does not re-compress
+// existing blobs; old blobs are read using the codec recorded in their meta.json.
+//
+// Use CodecNone (default) to disable compression.
+func WithCompression(codec Codec) OptionFunc {
+	return func(opts *Options) {
+		opts.Compression = codec
 	}
 }
 

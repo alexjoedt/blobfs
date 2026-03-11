@@ -52,6 +52,7 @@
 package blobfs
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -190,16 +191,22 @@ func (bs *Storage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 		return nil, err
 	}
 
-	if bs.opts.VerifyOnRead {
-		meta, err := bs.Stat(ctx, key)
-		if err != nil {
-			_ = rc.Close()
-			return nil, err
-		}
-		return newVerifyReader(rc, meta.Sha256), nil
+	meta, err := bs.Stat(ctx, key)
+	if err != nil {
+		_ = rc.Close()
+		return nil, err
 	}
 
-	return rc, nil
+	r, err := wrapDecompress(rc, Codec(meta.Compression))
+	if err != nil {
+		_ = rc.Close()
+		return nil, err
+	}
+
+	if bs.opts.VerifyOnRead {
+		return newVerifyReader(r, meta.Sha256), nil
+	}
+	return r, nil
 }
 
 func (bs *Storage) newTempFile() (*os.File, error) {
@@ -243,6 +250,38 @@ func (bs *Storage) Exists(ctx context.Context, key string) (bool, error) {
 
 	return true, nil
 }
+
+// wrapDecompress wraps rc with a decompressor for the given codec.
+// Returns rc unchanged for CodecNone or an empty codec string.
+func wrapDecompress(rc io.ReadCloser, codec Codec) (io.ReadCloser, error) {
+	switch codec {
+	case CodecNone: // "" — no compression
+		return rc, nil
+	case CodecGzip:
+		gr, err := gzip.NewReader(rc)
+		if err != nil {
+			return nil, fmt.Errorf("creating gzip reader: %w", err)
+		}
+		// gzip.Reader.Close does not close the underlying reader, so close both.
+		return struct {
+			io.Reader
+			io.Closer
+		}{gr, closeBoth(gr, rc)}, nil
+	default:
+		return nil, fmt.Errorf("unknown compression codec %q", codec)
+	}
+}
+
+// closeBoth returns a Closer that closes both a and b, joining any errors.
+func closeBoth(a, b io.Closer) io.Closer {
+	return closerFunc(func() error {
+		return errors.Join(a.Close(), b.Close())
+	})
+}
+
+type closerFunc func() error
+
+func (f closerFunc) Close() error { return f() }
 
 // verifyReader wraps an io.ReadCloser and computes a hash as data is read.
 // On Close, it verifies that the computed hash matches the expected value,
