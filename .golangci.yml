@@ -452,3 +452,8 @@ linters:
       - path: 'examples/'
         text: 'shadow: declaration of'
         linters: [ govet ]
+      # stat.Nlink is uint16 on Darwin but uint64 on Linux; the cast is needed for
+      # cross-platform compatibility, so suppress the nolintlint "unused directive" warning.
+      - path: cas_test\.go
+        linters: [ nolintlint ]
+        text: "unconvert"

@@ -37,7 +37,7 @@ func nlink(t *testing.T, path string) uint64 {
 	if !ok {
 		t.Skip("nlink not supported on this platform")
 	}
-	return uint64(stat.Nlink)
+	return uint64(stat.Nlink) //nolint: unconvert,golines // stat.Nlink is uint16 on Darwin but uint64 on Linux; explicit cast keeps cross-platform compatibility
 }
 
 // TestDedup_SameContentSingleInode verifies that two keys with identical content
