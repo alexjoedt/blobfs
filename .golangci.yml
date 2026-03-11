@@ -449,5 +449,6 @@ linters:
       - path: '_test\.go'
         text: 'shadow: declaration of'
         linters: [ govet ]
-      - text: 'shadow: declaration of'
+      - path: 'examples/'
+        text: 'shadow: declaration of'
         linters: [ govet ]
