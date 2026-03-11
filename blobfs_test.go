@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -285,7 +286,7 @@ func TestWalk(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var found []string
-			err := bs.Walk(t.Context(), tt.prefix, func(key string, meta *Meta, err error) error {
+			err := bs.Walk(t.Context(), tt.prefix, func(key string, _ *Meta, err error) error {
 				if err != nil {
 					return err
 				}
@@ -297,12 +298,12 @@ func TestWalk(t *testing.T) {
 			}
 
 			for _, expected := range tt.expected {
-				if !contains(found, expected) {
+				if !slices.Contains(found, expected) {
 					t.Errorf("expected key %q not found in results", expected)
 				}
 			}
 			for _, key := range found {
-				if !contains(tt.expected, key) {
+				if !slices.Contains(tt.expected, key) {
 					t.Errorf("unexpected key %q in results", key)
 				}
 			}
@@ -316,7 +317,7 @@ func TestWalkEarlyExit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := fmt.Sprintf("walk-early-exit/file-%d.txt", i)
 		if err := bs.Put(t.Context(), key, strings.NewReader(fmt.Sprintf("content %d", i))); err != nil {
 			t.Fatal(err)
@@ -324,7 +325,7 @@ func TestWalkEarlyExit(t *testing.T) {
 	}
 
 	count := 0
-	err = bs.Walk(t.Context(), "walk-early-exit/", func(key string, meta *Meta, err error) error {
+	err = bs.Walk(t.Context(), "walk-early-exit/", func(_ string, _ *Meta, err error) error {
 		if err != nil {
 			return err
 		}
@@ -348,7 +349,7 @@ func TestWalkContextCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := fmt.Sprintf("walk-cancel-test/file-%d.txt", i)
 		if err := bs.Put(t.Context(), key, strings.NewReader(fmt.Sprintf("content %d", i))); err != nil {
 			t.Fatal(err)
@@ -359,7 +360,7 @@ func TestWalkContextCancellation(t *testing.T) {
 	defer cancel()
 
 	count := 0
-	err = bs.Walk(ctx, "walk-cancel-test/", func(key string, meta *Meta, err error) error {
+	err = bs.Walk(ctx, "walk-cancel-test/", func(_ string, _ *Meta, err error) error {
 		if err != nil {
 			return err
 		}
@@ -388,7 +389,7 @@ func TestWalkMetadata(t *testing.T) {
 	}
 
 	var got *Meta
-	err = bs.Walk(t.Context(), "walk-meta-test/", func(k string, meta *Meta, err error) error {
+	err = bs.Walk(t.Context(), "walk-meta-test/", func(_ string, meta *Meta, err error) error {
 		if err != nil {
 			return err
 		}
@@ -760,13 +761,4 @@ func TestVerifyOnRead_Disabled(t *testing.T) {
 	if string(data) != "XXXX!" {
 		t.Errorf("unexpected data: expected 'XXXX!', got %q", string(data))
 	}
-}
-
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
 }

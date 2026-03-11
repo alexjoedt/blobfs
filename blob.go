@@ -4,7 +4,6 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
@@ -24,7 +23,7 @@ var (
 )
 
 // Blob represents a writable blob in the storage.
-// It implements io.Writer and io.Closer, allowing it to be used with io.Copy
+// It implements [io.Writer] and [io.Closer], allowing it to be used with [io.Copy]
 // and other standard Go interfaces.
 //
 // Why separate temp file: Using a temporary file during writes allows atomic
@@ -120,36 +119,41 @@ func (bs *Storage) NewBlob() (*Blob, error) {
 		return nil, fmt.Errorf("creating temp file: %w", err)
 	}
 
+	bufferSize := 512
 	blob := &Blob{
 		storage: bs,
 		tmpFile: tmpFile,
 		tmpPath: tmpFile.Name(),
 		hasher:  sha256.New(),
-		buffer:  make([]byte, 512),
+		buffer:  make([]byte, bufferSize),
 	}
 
 	switch bs.opts.Compression {
 	case CodecGzip:
 		blob.compressWriter = gzip.NewWriter(tmpFile)
 	case CodecZstd:
-		zw, err := zstd.NewWriter(tmpFile)
-		if err != nil {
+		zw, zstdErr := zstd.NewWriter(tmpFile)
+		if zstdErr != nil {
 			_ = tmpFile.Close()
-			return nil, fmt.Errorf("creating zstd writer: %w", err)
+			return nil, fmt.Errorf("creating zstd writer: %w", zstdErr)
 		}
 		blob.compressWriter = zw
+	case CodecNone:
+		// no compression
+	default:
+		return nil, ErrInvalidCodec
 	}
 
 	return blob, nil
 }
 
-// Write implements io.Writer, writing data to the blob.
+// Write implements [io.Writer], writing data to the blob.
 // The first 512 bytes are buffered for content type detection.
 //
-// Why buffer first 512 bytes: http.DetectContentType needs up to 512 bytes
+// Why buffer first 512 bytes: [http.DetectContentType] needs up to 512 bytes
 // to accurately determine MIME type from file signatures, but we don't want
 // to buffer the entire file in memory for large files.
-func (b *Blob) Write(p []byte) (n int, err error) {
+func (b *Blob) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -163,10 +167,7 @@ func (b *Blob) Write(p []byte) (n int, err error) {
 
 	// Buffer first bytes for content type detection
 	if b.bufferUsed < len(b.buffer) {
-		toCopy := len(b.buffer) - b.bufferUsed
-		if toCopy > len(p) {
-			toCopy = len(p)
-		}
+		toCopy := min(len(b.buffer)-b.bufferUsed, len(p))
 		copy(b.buffer[b.bufferUsed:], p[:toCopy])
 		b.bufferUsed += toCopy
 	}
@@ -174,13 +175,13 @@ func (b *Blob) Write(p []byte) (n int, err error) {
 	if b.compressWriter != nil {
 		// Hash original (uncompressed) bytes before compression.
 		if _, err := b.hasher.Write(p); err != nil {
-			b.err = err
-			return 0, err
+			b.err = fmt.Errorf("hashing write: %w", err)
+			return 0, b.err
 		}
 		written, err := b.compressWriter.Write(p)
 		if err != nil {
-			b.err = err
-			return written, err
+			b.err = fmt.Errorf("writing compressed data: %w", err)
+			return written, b.err
 		}
 		b.size += int64(len(p))
 		return len(p), nil
@@ -189,15 +190,15 @@ func (b *Blob) Write(p []byte) (n int, err error) {
 	// Write to temp file and hasher
 	written, err := b.tmpFile.Write(p)
 	if err != nil {
-		b.err = err
-		return written, err
+		b.err = fmt.Errorf("writing to temp file: %w", err)
+		return written, b.err
 	}
 
 	// Update hash
 	_, hashErr := b.hasher.Write(p[:written])
 	if hashErr != nil {
-		b.err = hashErr
-		return written, hashErr
+		b.err = fmt.Errorf("hashing write: %w", hashErr)
+		return written, b.err
 	}
 
 	b.size += int64(written)
@@ -225,7 +226,7 @@ func (b *Blob) Hash() string {
 // Returns ErrEmptyKey if key is empty, or ErrBlobClosed if already closed/committed.
 // After successful commit, the blob is closed and cannot be reused.
 //
-// Why atomic move: os.Rename is atomic on most filesystems, ensuring the blob
+// Why atomic move: [os.Rename] is atomic on most filesystems, ensuring the blob
 // either fully exists with metadata or doesn't exist at all. This prevents
 // other processes from reading partial or inconsistent data.
 func (b *Blob) CommitAs(key string) error {
@@ -254,25 +255,9 @@ func (b *Blob) CommitAs(key string) error {
 	b.closed = true
 	b.committed = true
 
-	// Flush and close the compress writer before closing the temp file.
-	if b.compressWriter != nil {
-		if err := b.compressWriter.Close(); err != nil {
-			b.err = err
-			return b.err
-		}
-	}
-
-	// Capture the actual on-disk (potentially compressed) size.
-	if info, err := b.tmpFile.Stat(); err == nil {
-		b.storedSize = info.Size()
-	}
-
-	// Ensure temp file is closed
-	if b.tmpFile != nil {
-		if err := b.tmpFile.Close(); err != nil {
-			b.err = err
-			return b.err
-		}
+	if err := b.finalizeTempFile(); err != nil {
+		b.err = err
+		return b.err
 	}
 
 	// Clean up on error
@@ -318,27 +303,38 @@ func (b *Blob) CommitAs(key string) error {
 	}
 
 	// Write metadata before moving the blob to ensure consistency.
-	mf, err := os.Create(metaPath)
-	if err != nil {
-		b.err = err
-		return b.err
-	}
-	defer mf.Close() // nolint: errcheck // Ensure file is closed even if encoding fails
-
-	enc := json.NewEncoder(mf)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(meta); err != nil {
+	if err := b.storage.writeMeta(meta, metaPath); err != nil {
 		b.err = err
 		return b.err
 	}
 
 	// Commit data into the object store and hard-link into refs.
 	dataPath := filepath.Join(storagePath, blobFileName)
-	if err := b.storage.commitData(b.tmpPath, dataPath, contentHash); err != nil {
+	err := b.storage.commitData(b.tmpPath, dataPath, contentHash)
+	if err != nil {
 		b.err = fmt.Errorf("committing blob: %w", err)
 		return b.err
 	}
 
+	return nil
+}
+
+// finalizeTempFile flushes the compress writer (if any), records the on-disk
+// size, and closes the temporary file. It is called once from CommitAs.
+func (b *Blob) finalizeTempFile() error {
+	if b.compressWriter != nil {
+		if err := b.compressWriter.Close(); err != nil {
+			return fmt.Errorf("closing compress writer: %w", err)
+		}
+	}
+	if info, err := b.tmpFile.Stat(); err == nil {
+		b.storedSize = info.Size()
+	}
+	if b.tmpFile != nil {
+		if err := b.tmpFile.Close(); err != nil {
+			return fmt.Errorf("closing temp file: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -364,7 +360,7 @@ func (b *Blob) Discard() error {
 
 	// Remove temp file
 	if b.tmpPath != "" {
-		_= os.Remove(b.tmpPath) // Ignore error - best effort cleanup
+		_ = os.Remove(b.tmpPath) // Ignore error - best effort cleanup
 	}
 
 	return b.err
@@ -373,7 +369,7 @@ func (b *Blob) Discard() error {
 // Close is an alias for Discard(). It closes the blob and removes the temporary file
 // without committing. To persist the blob, use CommitAs() instead.
 //
-// This allows Blob to satisfy io.Closer for compatibility with defer patterns,
+// This allows Blob to satisfy [io.Closer] for compatibility with defer patterns,
 // but does NOT commit the blob to storage.
 func (b *Blob) Close() error {
 	return b.Discard()

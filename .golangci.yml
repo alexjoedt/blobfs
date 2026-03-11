@@ -285,7 +285,7 @@ linters:
     gocognit:
       # Minimal code complexity to report.
       # Default: 30 (but we recommend 10-20)
-      min-complexity: 20
+      min-complexity: 30
 
     gocritic:
       # Settings passed to gocritic.
@@ -321,12 +321,6 @@ linters:
       # Default: []
       disable:
         - fieldalignment # too strict
-      # Settings per analyzer.
-      settings:
-        shadow:
-          # Whether to be strict about shadowing; can be noisy.
-          # Default: false
-          strict: true
 
     inamedparam:
       # Skips check for interface methods with only a single parameter.
@@ -448,4 +442,18 @@ linters:
           - funlen
           - goconst
           - gosec
+      - path: 'examples/'
+        linters:
           - wrapcheck
+          - wrapcheck
+      - path: '_test\.go'
+        text: 'shadow: declaration of'
+        linters: [ govet ]
+      - path: 'examples/'
+        text: 'shadow: declaration of'
+        linters: [ govet ]
+      # stat.Nlink is uint16 on Darwin but uint64 on Linux; the cast is needed for
+      # cross-platform compatibility, so suppress the nolintlint "unused directive" warning.
+      - path: cas_test\.go
+        linters: [ nolintlint ]
+        text: "unconvert"

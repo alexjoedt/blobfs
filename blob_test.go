@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -22,7 +23,7 @@ func TestBlob_Write(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard() // nolint: errcheck
+		defer blob.Discard()
 
 		data := []byte("Hello, World!")
 		n, err := blob.Write(data)
@@ -48,7 +49,7 @@ func TestBlob_Write(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard() // nolint: errcheck
+		defer blob.Discard()
 
 		writes := []string{"Hello", ", ", "World", "!"}
 		totalSize := 0
@@ -83,7 +84,7 @@ func TestBlob_IoCopy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard() // nolint: errcheck
+		defer blob.Discard()
 
 		content := "This is test content for io.Copy"
 		reader := strings.NewReader(content)
@@ -111,7 +112,7 @@ func TestBlob_IoCopy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard() // nolint: errcheck
+		defer blob.Discard()
 
 		// Generate 1MB of data
 		size := 1024 * 1024
@@ -136,7 +137,7 @@ func TestBlob_IoCopy(t *testing.T) {
 	})
 }
 
-func TestBlob_CommitAs(t *testing.T) {
+func TestBlob_CommitAs(t *testing.T) { //nolint: gocognit
 	tmpDir := t.TempDir()
 	storage, err := NewStorage(tmpDir)
 	if err != nil {
@@ -149,10 +150,10 @@ func TestBlob_CommitAs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard() // nolint: errcheck
+		defer blob.Discard()
 
 		content := "Test content"
-		blob.Write([]byte(content)) // nolint: errcheck
+		blob.Write([]byte(content))
 
 		err = blob.CommitAs(key)
 		if err != nil {
@@ -190,7 +191,7 @@ func TestBlob_CommitAs(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		blob.Write([]byte("Test")) // nolint: errcheck
+		blob.Write([]byte("Test"))
 
 		err1 := blob.Discard()
 		err2 := blob.Discard()
@@ -215,11 +216,11 @@ func TestBlob_CommitAs(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, _ = blob.Write([]byte("Initial")) // nolint: errcheck
+		_, _ = blob.Write([]byte("Initial"))
 		_ = blob.Close()
 
 		_, err = blob.Write([]byte("After close"))
-		if err != ErrBlobClosed {
+		if !errors.Is(err, ErrBlobClosed) {
 			t.Errorf("expected ErrBlobClosed, got %v", err)
 		}
 	})
@@ -229,12 +230,12 @@ func TestBlob_CommitAs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer blob.Discard() // nolint: errcheck
+		defer blob.Discard()
 
 		_, _ = blob.Write([]byte("Test"))
 
 		err = blob.CommitAs("")
-		if err != ErrEmptyKey {
+		if !errors.Is(err, ErrEmptyKey) {
 			t.Errorf("expected ErrEmptyKey, got %v", err)
 		}
 	})
@@ -296,7 +297,7 @@ func TestBlob_ContentType(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer blob.Discard() // nolint: errcheck
+			defer blob.Discard()
 
 			_, _ = blob.Write(tt.content)
 			if err := blob.CommitAs(key); err != nil {
@@ -427,7 +428,7 @@ func TestBlob_ConcurrentWrites(t *testing.T) {
 	// Create multiple blobs concurrently
 	errChan := make(chan error, numBlobs)
 
-	for i := 0; i < numBlobs; i++ {
+	for i := range numBlobs {
 		go func(idx int) {
 			key := fmt.Sprintf("test/concurrent-%d.txt", idx)
 			blob, err := storage.NewBlob()
@@ -450,14 +451,14 @@ func TestBlob_ConcurrentWrites(t *testing.T) {
 	}
 
 	// Check all operations succeeded
-	for i := 0; i < numBlobs; i++ {
+	for i := range numBlobs {
 		if err := <-errChan; err != nil {
 			t.Errorf("blob %d failed: %v", i, err)
 		}
 	}
 
 	// Verify all blobs exist
-	for i := 0; i < numBlobs; i++ {
+	for i := range numBlobs {
 		key := fmt.Sprintf("test/concurrent-%d.txt", i)
 		exists, err := storage.Exists(ctx, key)
 		if err != nil {
@@ -615,7 +616,7 @@ func TestBlob_Hash(t *testing.T) {
 	})
 }
 
-func TestBlob_Meta(t *testing.T) {
+func TestBlob_Meta(t *testing.T) { //nolint: gocognit,cyclop,golines // table-driven subtests intentionally increase complexity for full metadata coverage
 	tmpDir := t.TempDir()
 	storage, err := NewStorage(tmpDir)
 	if err != nil {

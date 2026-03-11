@@ -37,7 +37,7 @@ func nlink(t *testing.T, path string) uint64 {
 	if !ok {
 		t.Skip("nlink not supported on this platform")
 	}
-	return uint64(stat.Nlink)
+	return uint64(stat.Nlink) //nolint: unconvert,golines // stat.Nlink is uint16 on Darwin but uint64 on Linux; explicit cast keeps cross-platform compatibility
 }
 
 // TestDedup_SameContentSingleInode verifies that two keys with identical content
@@ -391,10 +391,10 @@ func TestGC_MultipleOrphans(t *testing.T) {
 func writeTestMeta(path string, meta *Meta) error {
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return err //nolint: wrapcheck // test helper returns raw create error for concise failures
 	}
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
-	return enc.Encode(meta)
+	return enc.Encode(meta) //nolint: wrapcheck // test helper returns raw create error for concise failures
 }
