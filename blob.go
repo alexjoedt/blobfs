@@ -139,10 +139,12 @@ func (bs *Storage) NewBlob() (*Blob, error) {
 		}
 		blob.compressWriter = zw
 	case CodecNone:
-		return blob, nil
+		// no compression
+	default:
+		return nil, ErrInvalidCodec
 	}
 
-	return nil, ErrInvalidCodec
+	return blob, nil
 }
 
 // Write implements [io.Writer], writing data to the blob.
