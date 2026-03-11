@@ -60,9 +60,11 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 const (
@@ -685,4 +687,103 @@ func (bs *Storage) Migrate(ctx context.Context) (MigrateStats, error) {
 	})
 
 	return stats, err
+}
+
+// GCStats reports the outcome of a GC call.
+type GCStats struct {
+	ObjectsScanned int
+	ObjectsRemoved int
+	BytesReclaimed int64
+}
+
+// GC removes unreferenced objects from the object store.
+// An object is unreferenced when its hard-link count is 1, meaning only the
+// objects/ anchor remains and all refs that pointed to it have been deleted.
+//
+// The nlink == 1 heuristic is correct on local POSIX filesystems (ext4, APFS,
+// XFS, ZFS, Btrfs). On platforms where nlink is unavailable the object is
+// skipped, keeping the store consistent at the cost of not reclaiming space.
+//
+// GC is safe to run concurrently with reads. It must not run concurrently
+// with writes unless the caller provides external coordination.
+func (bs *Storage) GC(ctx context.Context) (GCStats, error) {
+	var stats GCStats
+
+	err := filepath.WalkDir(bs.objectsDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("stat %q: %w", path, err)
+		}
+
+		stats.ObjectsScanned++
+
+		sys, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			// nlink not available on this platform; skip without error.
+			return nil
+		}
+
+		if sys.Nlink > 1 {
+			// At least one ref hard-link still points to this object.
+			return nil
+		}
+
+		// nlink == 1: only the objects/ anchor remains; the object is orphaned.
+		size := info.Size()
+		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return fmt.Errorf("removing orphaned object %q: %w", path, removeErr)
+		}
+		stats.ObjectsRemoved++
+		stats.BytesReclaimed += size
+		return nil
+	})
+	if err != nil {
+		return stats, err
+	}
+
+	bs.cleanupObjectsDirs()
+	return stats, nil
+}
+
+// cleanupObjectsDirs removes empty shard directories under objects/ after GC.
+func (bs *Storage) cleanupObjectsDirs() {
+	l1entries, err := os.ReadDir(bs.objectsDir)
+	if err != nil {
+		return
+	}
+	for _, l1 := range l1entries {
+		if !l1.IsDir() {
+			continue
+		}
+		l1Path := filepath.Join(bs.objectsDir, l1.Name())
+		l2entries, err := os.ReadDir(l1Path)
+		if err != nil {
+			continue
+		}
+		for _, l2 := range l2entries {
+			if !l2.IsDir() {
+				continue
+			}
+			l2Path := filepath.Join(l1Path, l2.Name())
+			if inner, _ := os.ReadDir(l2Path); len(inner) == 0 {
+				_ = os.Remove(l2Path)
+			}
+		}
+		if inner, _ := os.ReadDir(l1Path); len(inner) == 0 {
+			_ = os.Remove(l1Path)
+		}
+	}
 }

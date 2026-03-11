@@ -3,6 +3,7 @@ package blobfs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -239,6 +240,150 @@ func TestDedup_Migrate(t *testing.T) {
 	}
 	if stats2.BlobsSkipped != 1 {
 		t.Errorf("expected 1 skipped on re-run, got %d", stats2.BlobsSkipped)
+	}
+}
+
+// TestGC_RemovesOrphanedObject verifies that GC removes an object whose nlink == 1,
+// i.e. all refs have been deleted.
+func TestGC_RemovesOrphanedObject(t *testing.T) {
+	bs, err := NewStorage(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	content := "orphan me"
+
+	if err := bs.Put(ctx, "gc/key.txt", strings.NewReader(content)); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, err := bs.Stat(ctx, "gc/key.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objPath := bs.objectPath(meta.Sha256)
+
+	if err := bs.Delete(ctx, "gc/key.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Object must still exist before GC.
+	if _, err := os.Stat(objPath); err != nil {
+		t.Fatalf("object missing before GC: %v", err)
+	}
+
+	stats, err := bs.GC(ctx)
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+
+	if stats.ObjectsScanned != 1 {
+		t.Errorf("ObjectsScanned: got %d, want 1", stats.ObjectsScanned)
+	}
+	if stats.ObjectsRemoved != 1 {
+		t.Errorf("ObjectsRemoved: got %d, want 1", stats.ObjectsRemoved)
+	}
+	if stats.BytesReclaimed != int64(len(content)) {
+		t.Errorf("BytesReclaimed: got %d, want %d", stats.BytesReclaimed, len(content))
+	}
+
+	// Object must be gone after GC.
+	if _, err := os.Stat(objPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("expected object to be removed after GC, stat err: %v", err)
+	}
+}
+
+// TestGC_PreservesReferencedObject verifies that GC keeps objects that are still
+// referenced by at least one ref hard-link.
+func TestGC_PreservesReferencedObject(t *testing.T) {
+	bs, err := NewStorage(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	content := "keep me"
+
+	if err := bs.Put(ctx, "gc/keep1.txt", strings.NewReader(content)); err != nil {
+		t.Fatal(err)
+	}
+	if err := bs.Put(ctx, "gc/keep2.txt", strings.NewReader(content)); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, _ := bs.Stat(ctx, "gc/keep1.txt")
+	objPath := bs.objectPath(meta.Sha256)
+
+	// Delete only one of the two refs.
+	if err := bs.Delete(ctx, "gc/keep1.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := bs.GC(ctx)
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+
+	if stats.ObjectsRemoved != 0 {
+		t.Errorf("GC removed a referenced object; ObjectsRemoved=%d", stats.ObjectsRemoved)
+	}
+
+	// Object must still be readable via the surviving ref.
+	if _, err := os.Stat(objPath); err != nil {
+		t.Errorf("object unexpectedly removed: %v", err)
+	}
+	rc, err := bs.Get(ctx, "gc/keep2.txt")
+	if err != nil {
+		t.Fatalf("Get after GC: %v", err)
+	}
+	got, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(got) != content {
+		t.Errorf("got %q, want %q", got, content)
+	}
+}
+
+// TestGC_EmptyStore verifies that GC runs without error on an empty store.
+func TestGC_EmptyStore(t *testing.T) {
+	bs, err := NewStorage(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := bs.GC(context.Background())
+	if err != nil {
+		t.Fatalf("GC on empty store: %v", err)
+	}
+	if stats.ObjectsScanned != 0 || stats.ObjectsRemoved != 0 {
+		t.Errorf("unexpected stats on empty store: %+v", stats)
+	}
+}
+
+// TestGC_MultipleOrphans verifies that GC reclaims all orphaned objects in one pass.
+func TestGC_MultipleOrphans(t *testing.T) {
+	bs, err := NewStorage(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	keys := []string{"gc/a.txt", "gc/b.txt", "gc/c.txt"}
+	for i, key := range keys {
+		if err := bs.Put(ctx, key, strings.NewReader(key+string(rune('0'+i)))); err != nil {
+			t.Fatal(err)
+		}
+		if err := bs.Delete(ctx, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stats, err := bs.GC(ctx)
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if stats.ObjectsRemoved != len(keys) {
+		t.Errorf("ObjectsRemoved: got %d, want %d", stats.ObjectsRemoved, len(keys))
 	}
 }
 
