@@ -422,66 +422,6 @@ func (bs *Storage) Walk(ctx context.Context, prefix string, fn WalkFn) error {
 	})
 }
 
-// List returns an iterator over all blobs matching the given prefix.
-// The prefix is matched against the original blob keys, not the hashed storage paths.
-// An empty prefix matches all blobs.
-//
-// Deprecated: Use [Storage.Walk] instead. List will be removed in a future version.
-//
-// The iterator must be closed when done to prevent resource leaks:
-//
-//	iter := storage.List(ctx, "prefix/")
-//	defer iter.Close()
-//	for iter.Next() {
-//	    meta := iter.Meta()
-//	    // process meta...
-//	}
-//	if err := iter.Err(); err != nil {
-//	    // handle error
-//	}
-func (bs *Storage) List(ctx context.Context, prefix string) *BlobResult {
-	// Create cancellable context
-	ctx, cancel := context.WithCancel(ctx)
-
-	result := &BlobResult{
-		ctx:      ctx,
-		cancel:   cancel,
-		metaChan: make(chan *Meta, 10), // Buffer for smoother iteration
-		errChan:  make(chan error, 1),
-	}
-
-	// Start goroutine to walk filesystem
-	go bs.walkBlobs(ctx, prefix, result.metaChan, result.errChan)
-
-	return result
-}
-
-// walkBlobs is an internal adapter used by the deprecated List method.
-// It calls Walk and fans results into the provided channels.
-func (bs *Storage) walkBlobs(ctx context.Context, prefix string, metaChan chan<- *Meta, errChan chan<- error) {
-	defer close(metaChan)
-	defer close(errChan)
-
-	err := bs.Walk(ctx, prefix, func(key string, meta *Meta, err error) error {
-		if err != nil {
-			return err
-		}
-		select {
-		case metaChan <- meta:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		return nil
-	})
-
-	if err != nil && !errors.Is(err, context.Canceled) {
-		select {
-		case errChan <- err:
-		case <-ctx.Done():
-		}
-	}
-}
-
 func (bs *Storage) Delete(ctx context.Context, key string) error {
 	if err := bs.validateKey(key); err != nil {
 		return err

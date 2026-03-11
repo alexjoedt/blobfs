@@ -238,59 +238,6 @@ func TestWithShardFunc_GetAndDelete(t *testing.T) {
 	}
 }
 
-func TestWithShardFunc_List(t *testing.T) {
-	dir := t.TempDir()
-
-	// Flat sharding for easier testing
-	flatShard := func(key string) string {
-		hash := sha256.Sum256([]byte(key))
-		hexHash := hex.EncodeToString(hash[:])
-		return hexHash
-	}
-
-	storage, err := NewStorage(dir, WithShardFunc(flatShard))
-	if err != nil {
-		t.Fatalf("NewBlobStorage failed: %v", err)
-	}
-
-	ctx := t.Context()
-
-	// Create multiple blobs
-	keys := []string{"file1.txt", "file2.txt", "dir/file3.txt"}
-	for _, key := range keys {
-		err := storage.Put(ctx, key, strings.NewReader("content"))
-		if err != nil {
-			t.Fatalf("Put(%q) failed: %v", key, err)
-		}
-	}
-
-	// List all
-	iter := storage.List(ctx, "")
-	defer iter.Close()
-
-	count := 0
-	foundKeys := make(map[string]bool)
-	for iter.Next() {
-		meta := iter.Meta()
-		foundKeys[meta.Key] = true
-		count++
-	}
-
-	if err := iter.Err(); err != nil {
-		t.Fatalf("iteration failed: %v", err)
-	}
-
-	if count != len(keys) {
-		t.Errorf("expected %d blobs, got %d", len(keys), count)
-	}
-
-	for _, key := range keys {
-		if !foundKeys[key] {
-			t.Errorf("key %q not found in list", key)
-		}
-	}
-}
-
 func TestWithShardFunc_MultipleOptions(t *testing.T) {
 	dir := t.TempDir()
 
