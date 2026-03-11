@@ -32,7 +32,7 @@ func readMachineID() [3]byte {
 	}
 
 	// Use hostname hash for machine ID
-	hw := make([]byte, 32)
+	hw := make([]byte, 32) //nolint: mnd // buffer size for hostname hash
 	copy(hw, hostname)
 	copy(mid[:], hw[:3])
 	return mid
@@ -77,9 +77,9 @@ func newID() string {
 
 	// Counter (3 bytes) - atomically incremented
 	c := atomic.AddUint32(&counter, 1)
-	id[9] = byte(c >> 16)  //nolint:gosec // intentional truncation: extracting byte from uint32
-	id[10] = byte(c >> 8)  //nolint:gosec // intentional truncation: extracting byte from uint32
-	id[11] = byte(c)       //nolint:gosec // intentional truncation: extracting byte from uint32
+	id[9] = byte(c >> 16) //nolint:gosec,mnd // intentional truncation: extracting byte from uint32
+	id[10] = byte(c >> 8) //nolint:gosec,mnd // intentional truncation: extracting byte from uint32
+	id[11] = byte(c)      //nolint:gosec // intentional truncation: extracting byte from uint32
 
 	return hex.EncodeToString(id[:])
 }
