@@ -29,6 +29,8 @@ const (
 	CodecNone Codec = ""
 	// CodecGzip enables gzip compression.
 	CodecGzip Codec = "gzip"
+	// CodecZstd enables Zstandard compression (better ratio and speed than gzip).
+	CodecZstd Codec = "zstd"
 )
 
 // Options configures BlobStorage behavior.

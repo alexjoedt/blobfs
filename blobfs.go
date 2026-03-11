@@ -66,6 +66,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 const (
@@ -267,6 +269,16 @@ func wrapDecompress(rc io.ReadCloser, codec Codec) (io.ReadCloser, error) {
 			io.Reader
 			io.Closer
 		}{gr, closeBoth(gr, rc)}, nil
+	case CodecZstd:
+		zr, err := zstd.NewReader(rc)
+		if err != nil {
+			return nil, fmt.Errorf("creating zstd reader: %w", err)
+		}
+		// zstd.Decoder has no Close that returns an error; Close releases resources.
+		return struct {
+			io.Reader
+			io.Closer
+		}{zr, closeBoth(zstdCloser{zr}, rc)}, nil
 	default:
 		return nil, fmt.Errorf("unknown compression codec %q", codec)
 	}
@@ -282,6 +294,11 @@ func closeBoth(a, b io.Closer) io.Closer {
 type closerFunc func() error
 
 func (f closerFunc) Close() error { return f() }
+
+// zstdCloser adapts *zstd.Decoder (whose Close has no return value) to io.Closer.
+type zstdCloser struct{ d *zstd.Decoder }
+
+func (z zstdCloser) Close() error { z.d.Close(); return nil }
 
 // verifyReader wraps an io.ReadCloser and computes a hash as data is read.
 // On Close, it verifies that the computed hash matches the expected value,

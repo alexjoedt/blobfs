@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 var (
@@ -126,8 +128,16 @@ func (bs *Storage) NewBlob() (*Blob, error) {
 		buffer:  make([]byte, 512),
 	}
 
-	if bs.opts.Compression == CodecGzip {
+	switch bs.opts.Compression {
+	case CodecGzip:
 		blob.compressWriter = gzip.NewWriter(tmpFile)
+	case CodecZstd:
+		zw, err := zstd.NewWriter(tmpFile)
+		if err != nil {
+			_ = tmpFile.Close()
+			return nil, fmt.Errorf("creating zstd writer: %w", err)
+		}
+		blob.compressWriter = zw
 	}
 
 	return blob, nil

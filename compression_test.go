@@ -160,6 +160,105 @@ func TestCompression_WithVerifyOnRead(t *testing.T) {
 	}
 }
 
+func TestCompression_Zstd_RoundTrip(t *testing.T) {
+	bs, err := NewStorage(t.TempDir(), WithCompression(CodecZstd))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	original := bytes.Repeat([]byte("hello world "), 1000)
+
+	if err := bs.Put(ctx, "compressed/test.txt", bytes.NewReader(original)); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, err := bs.Stat(ctx, "compressed/test.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Compression != string(CodecZstd) {
+		t.Errorf("expected compression %q, got %q", CodecZstd, meta.Compression)
+	}
+	if meta.StoredSize >= meta.Size {
+		t.Errorf("expected stored size (%d) < original size (%d)", meta.StoredSize, meta.Size)
+	}
+
+	rc, err := bs.Get(ctx, "compressed/test.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Error("zstd round-trip content mismatch")
+	}
+}
+
+func TestCompression_Zstd_MixedStorage(t *testing.T) {
+	// A blob written without compression must still be readable when the
+	// storage is opened with zstd.
+	dir := t.TempDir()
+
+	plain, err := NewStorage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plain.Put(context.Background(), "legacy/blob.txt", strings.NewReader("uncompressed")); err != nil {
+		t.Fatal(err)
+	}
+
+	zs, err := NewStorage(dir, WithCompression(CodecZstd))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := zs.Get(context.Background(), "legacy/blob.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "uncompressed" {
+		t.Errorf("expected %q, got %q", "uncompressed", string(got))
+	}
+}
+
+func TestCompression_Zstd_WithVerifyOnRead(t *testing.T) {
+	bs, err := NewStorage(t.TempDir(), WithCompression(CodecZstd), WithVerifyOnRead(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	original := bytes.Repeat([]byte("verifiable zstd content "), 500)
+
+	if err := bs.Put(ctx, "verify/compressed.txt", bytes.NewReader(original)); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, err := bs.Get(ctx, "verify/compressed.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rc.Close(); err != nil {
+		t.Errorf("unexpected error on clean zstd blob: %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Error("round-trip content mismatch with zstd + verification")
+	}
+}
+
+
 func TestCompression_Dedup_CompressedContent(t *testing.T) {
 	// Two keys with identical content should deduplicate even when compressed.
 	bs, err := NewStorage(t.TempDir(), WithCompression(CodecGzip))
