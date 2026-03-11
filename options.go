@@ -18,7 +18,7 @@ import (
 //   - Distribute keys evenly to avoid filesystem hotspots
 //   - Be safe from path traversal attacks
 //
-// Example: For key "users/avatar.jpg", might return "blobs/a3/f2/a3f29d4e8c..."
+// Example: For key "users/avatar.jpg", might return "blobs/a3/f2/a3f29d4e8c...".
 type ShardFunc func(key string) string
 
 // Codec identifies a compression algorithm used for stored blobs.
@@ -166,7 +166,7 @@ func BucketShardFunc(key string) string {
 // defaultOpts provides sensible default options.
 // Why these defaults: 0644 for files allows owner to modify, others to read.
 // 0755 for directories allows traversal while protecting against modification.
-var defaultOpts = &Options{
+var defaultOpts = &Options{ //nolint:gochecknoglobals // package-level defaults used by NewStorage
 	FileMode:  0644,
 	DirMode:   0755,
 	ShardFunc: DefaultShardFunc,

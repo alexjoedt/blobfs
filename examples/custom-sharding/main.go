@@ -55,6 +55,12 @@ func threeLevelShardFunc(key string) string {
 }
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	ctx := context.Background()
 
 	strategies := []struct {
@@ -75,20 +81,20 @@ func main() {
 		"backup.tar.gz",
 	}
 
-	fmt.Println("=== Shard path mapping ===")
+	fmt.Fprintln(os.Stdout, "=== Shard path mapping ===")
 	for _, s := range strategies {
-		fmt.Printf("\n  Strategy: %s\n", s.name)
+		fmt.Fprintf(os.Stdout, "\n  Strategy: %s\n", s.name)
 		for _, key := range keys {
-			fmt.Printf("    %-30s -> %s\n", key, s.fn(key))
+			fmt.Fprintf(os.Stdout, "    %-30s -> %s\n", key, s.fn(key))
 		}
 	}
 
 	// Demonstrate using a custom shard function with actual storage
-	fmt.Println("\n=== Date-based sharding in action ===")
+	fmt.Fprintln(os.Stdout, "\n=== Date-based sharding in action ===")
 
 	dir, err := os.MkdirTemp("", "blobfs-sharding-*")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer os.RemoveAll(dir)
 
@@ -96,28 +102,30 @@ func main() {
 		blobfs.WithShardFunc(dateShardFunc),
 	)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// Store some blobs - they'll be organized by today's date
 	for _, key := range keys {
 		content := fmt.Sprintf("content of %s", key)
 		if err := storage.Put(ctx, key, bytes.NewReader([]byte(content))); err != nil {
-			log.Fatal(err)
+			return err
 		}
-		fmt.Printf("  stored: %s\n", key)
+		fmt.Fprintf(os.Stdout, "  stored: %s\n", key)
 	}
 
 	// Walk and show the stored blobs
-	fmt.Println("\n  Stored blobs:")
+	fmt.Fprintln(os.Stdout, "\n  Stored blobs:")
 	err = storage.Walk(ctx, "", func(key string, meta *blobfs.Meta, err error) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("    %s (sha256: %s...)\n", key, meta.Sha256[:16])
+		fmt.Fprintf(os.Stdout, "    %s (sha256: %s...)\n", key, meta.Sha256[:16])
 		return nil
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+
+	return nil
 }

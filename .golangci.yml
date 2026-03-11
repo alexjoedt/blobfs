@@ -448,4 +448,10 @@ linters:
           - funlen
           - goconst
           - gosec
+      - path: 'examples/'
+        linters:
           - wrapcheck
+          - wrapcheck
+      - path: '_test\.go'
+        text: 'shadow: declaration of'
+        linters: [ govet ]

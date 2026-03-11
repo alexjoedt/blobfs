@@ -14,11 +14,11 @@ import (
 type ID [12]byte
 
 var (
-	// machineID is a 3-byte unique identifier for this machine
-	machineID = readMachineID()
+	// machineID is a 3-byte unique identifier for this machine.
+	machineID = readMachineID() //nolint:gochecknoglobals // package-level state required for unique ID generation
 
-	// counter is an atomically incremented counter (3 bytes)
-	counter = readRandomUint32()
+	// counter is an atomically incremented counter (3 bytes).
+	counter = readRandomUint32() //nolint:gochecknoglobals // package-level state required for unique ID generation
 )
 
 // readMachineID generates a 3-byte machine identifier.
@@ -38,7 +38,7 @@ func readMachineID() [3]byte {
 	return mid
 }
 
-// readRandomUint32 generates a random uint32 for counter initialization
+// readRandomUint32 generates a random uint32 for counter initialization.
 func readRandomUint32() uint32 {
 	var b [4]byte
 	_, _ = io.ReadFull(rand.Reader, b[:])
@@ -65,21 +65,21 @@ func newID() string {
 	var id ID
 
 	// Timestamp (4 bytes)
-	timestamp := uint32(time.Now().Unix())
+	timestamp := uint32(time.Now().Unix()) //nolint:gosec // intentional truncation: 32-bit timestamp wraps in 2106
 	binary.BigEndian.PutUint32(id[0:4], timestamp)
 
 	// Machine ID (3 bytes)
 	copy(id[4:7], machineID[:])
 
 	// Process ID (2 bytes)
-	pid := uint16(os.Getpid())
+	pid := uint16(os.Getpid()) //nolint:gosec // intentional truncation: PID modulo 65536 is sufficient for uniqueness
 	binary.BigEndian.PutUint16(id[7:9], pid)
 
 	// Counter (3 bytes) - atomically incremented
 	c := atomic.AddUint32(&counter, 1)
-	id[9] = byte(c >> 16)
-	id[10] = byte(c >> 8)
-	id[11] = byte(c)
+	id[9] = byte(c >> 16)  //nolint:gosec // intentional truncation: extracting byte from uint32
+	id[10] = byte(c >> 8)  //nolint:gosec // intentional truncation: extracting byte from uint32
+	id[11] = byte(c)       //nolint:gosec // intentional truncation: extracting byte from uint32
 
 	return hex.EncodeToString(id[:])
 }

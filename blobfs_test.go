@@ -285,7 +285,7 @@ func TestWalk(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var found []string
-			err := bs.Walk(t.Context(), tt.prefix, func(key string, meta *Meta, err error) error {
+			err := bs.Walk(t.Context(), tt.prefix, func(key string, _ *Meta, err error) error {
 				if err != nil {
 					return err
 				}
@@ -324,7 +324,7 @@ func TestWalkEarlyExit(t *testing.T) {
 	}
 
 	count := 0
-	err = bs.Walk(t.Context(), "walk-early-exit/", func(key string, meta *Meta, err error) error {
+	err = bs.Walk(t.Context(), "walk-early-exit/", func(_ string, _ *Meta, err error) error {
 		if err != nil {
 			return err
 		}
@@ -359,7 +359,7 @@ func TestWalkContextCancellation(t *testing.T) {
 	defer cancel()
 
 	count := 0
-	err = bs.Walk(ctx, "walk-cancel-test/", func(key string, meta *Meta, err error) error {
+	err = bs.Walk(ctx, "walk-cancel-test/", func(_ string, _ *Meta, err error) error {
 		if err != nil {
 			return err
 		}
@@ -388,7 +388,7 @@ func TestWalkMetadata(t *testing.T) {
 	}
 
 	var got *Meta
-	err = bs.Walk(t.Context(), "walk-meta-test/", func(k string, meta *Meta, err error) error {
+	err = bs.Walk(t.Context(), "walk-meta-test/", func(_ string, meta *Meta, err error) error {
 		if err != nil {
 			return err
 		}

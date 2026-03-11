@@ -258,7 +258,6 @@ func TestCompression_Zstd_WithVerifyOnRead(t *testing.T) {
 	}
 }
 
-
 func TestCompression_Dedup_CompressedContent(t *testing.T) {
 	// Two keys with identical content should deduplicate even when compressed.
 	bs, err := NewStorage(t.TempDir(), WithCompression(CodecGzip))

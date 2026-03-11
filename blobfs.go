@@ -48,7 +48,7 @@
 // # Error Handling
 //
 // All methods return errors that can be unwrapped using errors.Is and
-// errors.As for standard error types like os.ErrNotExist.
+// [errors.As] for standard error types like os.ErrNotExist.
 package blobfs
 
 import (
@@ -86,6 +86,7 @@ var (
 	ErrEmptyKey         = errors.New("key cannot be empty")
 	ErrInvalidKey       = errors.New("key contains invalid characters")
 	ErrCorrupted        = errors.New("blob content does not match stored hash")
+	ErrInvalidCodec     = errors.New("codec is not supported")
 )
 
 type Storage struct {
@@ -146,7 +147,7 @@ func NewStorage(root string, opts ...OptionFunc) (*Storage, error) {
 //
 // Why temp file: Writing to a temporary file first ensures atomicity - the blob
 // either fully exists or doesn't, preventing partial writes from being visible.
-func (bs *Storage) Put(ctx context.Context, key string, r io.Reader) error {
+func (bs *Storage) Put(_ context.Context, key string, r io.Reader) error {
 	blob, err := bs.NewBlob()
 	if err != nil {
 		return err
@@ -154,7 +155,7 @@ func (bs *Storage) Put(ctx context.Context, key string, r io.Reader) error {
 	defer blob.Discard()
 
 	if _, err := io.Copy(blob, r); err != nil {
-		return err
+		return fmt.Errorf("copying data to blob: %w", err)
 	}
 
 	return blob.CommitAs(key)
@@ -168,7 +169,7 @@ func (bs *Storage) Put(ctx context.Context, key string, r io.Reader) error {
 //	if err != nil { ... }
 //	defer f.Close()
 //	http.ServeContent(w, r, "clip.mp4", meta.ModifiedAt, f)
-func (bs *Storage) Open(ctx context.Context, key string) (io.ReadSeekCloser, error) {
+func (bs *Storage) Open(_ context.Context, key string) (io.ReadSeekCloser, error) {
 	if err := bs.validateKey(key); err != nil {
 		return nil, err
 	}
@@ -213,10 +214,14 @@ func (bs *Storage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 
 func (bs *Storage) newTempFile() (*os.File, error) {
 	tempPath := filepath.Join(bs.root, tempDirName, newID())
-	return os.Create(tempPath)
+	f, err := os.Create(tempPath)
+	if err != nil {
+		return nil, fmt.Errorf("creating temp file: %w", err)
+	}
+	return f, nil
 }
 
-func (bs *Storage) Stat(ctx context.Context, key string) (*Meta, error) {
+func (bs *Storage) Stat(_ context.Context, key string) (*Meta, error) {
 	if err := bs.validateKey(key); err != nil {
 		return nil, err
 	}
@@ -234,7 +239,7 @@ func (bs *Storage) Stat(ctx context.Context, key string) (*Meta, error) {
 	return meta, nil
 }
 
-func (bs *Storage) Exists(ctx context.Context, key string) (bool, error) {
+func (bs *Storage) Exists(_ context.Context, key string) (bool, error) {
 	if err := bs.validateKey(key); err != nil {
 		return false, err
 	}
@@ -247,7 +252,7 @@ func (bs *Storage) Exists(ctx context.Context, key string) (bool, error) {
 		return false, nil
 	}
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("checking blob %q: %w", key, err)
 	}
 
 	return true, nil
@@ -295,12 +300,12 @@ type closerFunc func() error
 
 func (f closerFunc) Close() error { return f() }
 
-// zstdCloser adapts *zstd.Decoder (whose Close has no return value) to io.Closer.
+// zstdCloser adapts *zstd.Decoder (whose Close has no return value) to [io.Closer].
 type zstdCloser struct{ d *zstd.Decoder }
 
 func (z zstdCloser) Close() error { z.d.Close(); return nil }
 
-// verifyReader wraps an io.ReadCloser and computes a hash as data is read.
+// verifyReader wraps an [io.ReadCloser] and computes a hash as data is read.
 // On Close, it verifies that the computed hash matches the expected value,
 // returning ErrCorrupted if they don't match.
 type verifyReader struct {
@@ -325,14 +330,14 @@ func (v *verifyReader) Read(p []byte) (int, error) {
 	if n > 0 {
 		_, _ = v.hasher.Write(p[:n])
 	}
-	return n, err
+	return n, err //nolint:wrapcheck // must preserve io.EOF and other reader errors as-is
 }
 
 // Close closes the underlying reader and verifies the computed hash
 // against the expected value. Returns ErrCorrupted if they don't match.
 func (v *verifyReader) Close() error {
 	if err := v.rc.Close(); err != nil {
-		return err
+		return fmt.Errorf("closing reader: %w", err)
 	}
 	got := hex.EncodeToString(v.hasher.Sum(nil))
 	if got != v.expected {
@@ -448,7 +453,7 @@ type WalkFn func(key string, meta *Meta, err error) error
 //		return nil
 //	})
 func (bs *Storage) Walk(ctx context.Context, prefix string, fn WalkFn) error {
-	return filepath.WalkDir(bs.refsDir, func(path string, d os.DirEntry, err error) error {
+	return filepath.WalkDir(bs.refsDir, func(path string, d os.DirEntry, err error) error { //nolint:wrapcheck // WalkDir propagates fn errors directly; wrapping would obscure user errors
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -480,7 +485,7 @@ func (bs *Storage) Walk(ctx context.Context, prefix string, fn WalkFn) error {
 	})
 }
 
-func (bs *Storage) Delete(ctx context.Context, key string) error {
+func (bs *Storage) Delete(_ context.Context, key string) error {
 	if err := bs.validateKey(key); err != nil {
 		return err
 	}
@@ -506,10 +511,25 @@ func (bs *Storage) createPathFromKey(key string) string {
 	return filepath.Join(bs.refsDir, shardPath)
 }
 
+func (bs *Storage) writeMeta(meta *Meta, path string) error {
+	mf, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("creating meta file: %w", err)
+	}
+	defer func() { _ = mf.Close() }()
+
+	enc := json.NewEncoder(mf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(meta); err != nil {
+		return fmt.Errorf("encoding metadata: %w", err)
+	}
+	return nil
+}
+
 func (bs *Storage) readMeta(path string) (*Meta, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening meta file: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -590,10 +610,10 @@ func (bs *Storage) commitData(tmpPath, dataPath, contentHash string) error {
 	if _, err := os.Stat(objectPath); errors.Is(err, os.ErrNotExist) {
 		// First time this content is seen: move tmp into the object store.
 		if err := os.MkdirAll(filepath.Dir(objectPath), bs.opts.DirMode); err != nil {
-			return err
+			return fmt.Errorf("creating object directory: %w", err)
 		}
 		if err := os.Rename(tmpPath, objectPath); err != nil {
-			return err
+			return fmt.Errorf("moving temp file to object store: %w", err)
 		}
 	} else {
 		// Content already exists: discard the temp file.
@@ -617,23 +637,26 @@ func (bs *Storage) objectPath(contentHash string) string {
 }
 
 // copyFile copies src to dst with the given mode. Used as a fallback when
-// os.Link fails (e.g. cross-device or network filesystem).
+// [os.Link] fails (e.g. cross-device or network filesystem).
 func copyFile(src, dst string, mode os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening source file: %w", err)
 	}
 	defer in.Close()
 
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening destination file: %w", err)
 	}
 	if _, err := io.Copy(out, in); err != nil {
 		_ = out.Close()
-		return err
+		return fmt.Errorf("copying file content: %w", err)
 	}
-	return out.Close()
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("closing destination file: %w", err)
+	}
+	return nil
 }
 
 // cleanupEmptyDirs removes empty parent directories after blob deletion.
@@ -765,7 +788,7 @@ type GCStats struct {
 func (bs *Storage) GC(ctx context.Context) (GCStats, error) {
 	var stats GCStats
 
-	err := filepath.WalkDir(bs.objectsDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(bs.objectsDir, func(path string, d fs.DirEntry, err error) error { //nolint:wrapcheck // WalkDir propagates traversal errors; wrapping not needed here
 		if err != nil {
 			return err
 		}
@@ -807,7 +830,7 @@ func (bs *Storage) GC(ctx context.Context) (GCStats, error) {
 		return nil
 	})
 	if err != nil {
-		return stats, err
+		return stats, fmt.Errorf("walking objects directory: %w", err)
 	}
 
 	bs.cleanupObjectsDirs()

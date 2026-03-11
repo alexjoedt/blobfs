@@ -13,15 +13,21 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	dir, err := os.MkdirTemp("", "blobfs-walk-*")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer os.RemoveAll(dir)
 
 	storage, err := blobfs.NewStorage(dir)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	ctx := context.Background()
@@ -38,48 +44,48 @@ func main() {
 
 	for key, content := range blobs {
 		if err := storage.Put(ctx, key, bytes.NewReader([]byte(content))); err != nil {
-			log.Fatal(err)
+			return err
 		}
 	}
-	fmt.Printf("stored %d blobs\n\n", len(blobs))
+	fmt.Fprintf(os.Stdout, "stored %d blobs\n\n", len(blobs))
 
 	// Walk all blobs
-	fmt.Println("=== All blobs ===")
+	fmt.Fprintln(os.Stdout, "=== All blobs ===")
 	var count int
 	err = storage.Walk(ctx, "", func(key string, meta *blobfs.Meta, err error) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("  %s (%d bytes, %s)\n", key, meta.Size, meta.ContentType)
+		fmt.Fprintf(os.Stdout, "  %s (%d bytes, %s)\n", key, meta.Size, meta.ContentType)
 		count++
 		return nil
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	fmt.Printf("total: %d\n\n", count)
+	fmt.Fprintf(os.Stdout, "total: %d\n\n", count)
 
 	// Walk only images
-	fmt.Println("=== Images only (prefix: images/) ===")
+	fmt.Fprintln(os.Stdout, "=== Images only (prefix: images/) ===")
 	err = storage.Walk(ctx, "images/", func(key string, meta *blobfs.Meta, err error) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("  %s (%d bytes)\n", key, meta.Size)
+		fmt.Fprintf(os.Stdout, "  %s (%d bytes)\n", key, meta.Size)
 		return nil
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// Walk with early termination using filepath.SkipAll
-	fmt.Println("\n=== First 2 blobs (early stop) ===")
+	fmt.Fprintln(os.Stdout, "\n=== First 2 blobs (early stop) ===")
 	var seen int
-	err = storage.Walk(ctx, "", func(key string, meta *blobfs.Meta, err error) error {
+	err = storage.Walk(ctx, "", func(key string, _ *blobfs.Meta, err error) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("  %s\n", key)
+		fmt.Fprintf(os.Stdout, "  %s\n", key)
 		seen++
 		if seen >= 2 {
 			return filepath.SkipAll
@@ -87,7 +93,9 @@ func main() {
 		return nil
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	fmt.Printf("stopped after %d blobs\n", seen)
+	fmt.Fprintf(os.Stdout, "stopped after %d blobs\n", seen)
+
+	return nil
 }
