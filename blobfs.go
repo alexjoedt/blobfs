@@ -47,8 +47,8 @@
 //
 // # Error Handling
 //
-// All methods return errors that can be unwrapped using errors.Is and
-// [errors.As] for standard error types like os.ErrNotExist.
+// All methods return errors that can be unwrapped using [errors.Is] and
+// [errors.As] for standard error types like [os.ErrNotExist].
 package blobfs
 
 import (
@@ -152,7 +152,7 @@ func (bs *Storage) Put(_ context.Context, key string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	defer blob.Discard()
+	defer blob.Discard() //nolint: errcheck // fine to ignore
 
 	if _, err := io.Copy(blob, r); err != nil {
 		return fmt.Errorf("copying data to blob: %w", err)
@@ -453,7 +453,8 @@ type WalkFn func(key string, meta *Meta, err error) error
 //		return nil
 //	})
 func (bs *Storage) Walk(ctx context.Context, prefix string, fn WalkFn) error {
-	return filepath.WalkDir(bs.refsDir, func(path string, d os.DirEntry, err error) error { //nolint:wrapcheck // WalkDir propagates fn errors directly; wrapping would obscure user errors
+	//nolint:wrapcheck // WalkDir propagates fn errors directly; wrapping would obscure user errors
+	return filepath.WalkDir(bs.refsDir, func(path string, d os.DirEntry, err error) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -788,7 +789,7 @@ type GCStats struct {
 func (bs *Storage) GC(ctx context.Context) (GCStats, error) {
 	var stats GCStats
 
-	err := filepath.WalkDir(bs.objectsDir, func(path string, d fs.DirEntry, err error) error { //nolint:wrapcheck // WalkDir propagates traversal errors; wrapping not needed here
+	err := filepath.WalkDir(bs.objectsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
