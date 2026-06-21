@@ -277,8 +277,10 @@ func (b *Blob) CommitAs(key string) error {
 	createdAt := time.Now()
 	storagePath := b.storage.createPathFromKey(key)
 	metaPath := filepath.Join(storagePath, metaFileName)
+	overwrite := false
 	if existingMeta, err := b.storage.readMeta(metaPath); err == nil {
 		createdAt = existingMeta.CreatedAt
+		overwrite = Codec(existingMeta.Compression) != b.storage.opts.Compression
 	}
 
 	// Create metadata
@@ -310,7 +312,7 @@ func (b *Blob) CommitAs(key string) error {
 
 	// Commit data into the object store and hard-link into refs.
 	dataPath := filepath.Join(storagePath, blobFileName)
-	err := b.storage.commitData(b.tmpPath, dataPath, contentHash)
+	err := b.storage.commitData(b.tmpPath, dataPath, contentHash, overwrite)
 	if err != nil {
 		b.err = fmt.Errorf("committing blob: %w", err)
 		return b.err

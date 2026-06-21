@@ -606,7 +606,7 @@ func isValidKeyChar(r rune) bool {
 //
 // Hard links keep the inode reference count accurate, enabling GC to detect
 // unreferenced objects by looking for nlink == 1.
-func (bs *Storage) commitData(tmpPath, dataPath, contentHash string) error {
+func (bs *Storage) commitData(tmpPath, dataPath, contentHash string, overwrite bool) error {
 	objectPath := bs.objectPath(contentHash)
 
 	if _, err := os.Stat(objectPath); errors.Is(err, os.ErrNotExist) {
@@ -614,6 +614,11 @@ func (bs *Storage) commitData(tmpPath, dataPath, contentHash string) error {
 		if err := os.MkdirAll(filepath.Dir(objectPath), bs.opts.DirMode); err != nil {
 			return fmt.Errorf("creating object directory: %w", err)
 		}
+		if err := os.Rename(tmpPath, objectPath); err != nil {
+			return fmt.Errorf("moving temp file to object store: %w", err)
+		}
+	} else if overwrite {
+		// Content already exists, compression has changed: replace it with the temp file.
 		if err := os.Rename(tmpPath, objectPath); err != nil {
 			return fmt.Errorf("moving temp file to object store: %w", err)
 		}
