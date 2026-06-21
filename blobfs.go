@@ -32,13 +32,14 @@
 //	rc, err := storage.Get(ctx, "documents/invoice.pdf")
 //	defer rc.Close()
 //
-//	// List blobs with prefix
-//	iter := storage.List(ctx, "documents/")
-//	defer iter.Close()
-//	for iter.Next() {
-//		meta := iter.Meta()
-//		// process metadata...
-//	}
+//	// Walk blobs with prefix
+//	err = storage.Walk(ctx, "documents/", func(key string, meta *Meta, err error) error {
+//		if err != nil {
+//			return err
+//		}
+//		// process key and metadata...
+//		return nil
+//	})
 //
 // # Concurrency
 //
