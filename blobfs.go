@@ -639,6 +639,8 @@ func (bs *Storage) placeObject(tmpPath, objectPath string, overwrite bool) error
 	}
 	if overwrite {
 		// Content already exists, compression has changed: replace it with the temp file.
+		// MkdirAll is not required here because os.Stat succeeded above, so the parent
+		// directory is guaranteed to exist.
 		if err := os.Rename(tmpPath, objectPath); err != nil {
 			return fmt.Errorf("moving temp file to object store: %w", err)
 		}
