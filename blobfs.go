@@ -608,23 +608,8 @@ func isValidKeyChar(r rune) bool {
 // unreferenced objects by looking for nlink == 1.
 func (bs *Storage) commitData(tmpPath, dataPath, contentHash string, overwrite bool) error {
 	objectPath := bs.objectPath(contentHash)
-
-	if _, err := os.Stat(objectPath); errors.Is(err, os.ErrNotExist) {
-		// First time this content is seen: move tmp into the object store.
-		if err := os.MkdirAll(filepath.Dir(objectPath), bs.opts.DirMode); err != nil {
-			return fmt.Errorf("creating object directory: %w", err)
-		}
-		if err := os.Rename(tmpPath, objectPath); err != nil {
-			return fmt.Errorf("moving temp file to object store: %w", err)
-		}
-	} else if overwrite {
-		// Content already exists, compression has changed: replace it with the temp file.
-		if err := os.Rename(tmpPath, objectPath); err != nil {
-			return fmt.Errorf("moving temp file to object store: %w", err)
-		}
-	} else {
-		// Content already exists: discard the temp file.
-		_ = os.Remove(tmpPath)
+	if err := bs.placeObject(tmpPath, objectPath, overwrite); err != nil {
+		return err
 	}
 
 	// Hard-link the object into the ref slot (remove stale link first on overwrite).
@@ -633,6 +618,34 @@ func (bs *Storage) commitData(tmpPath, dataPath, contentHash string, overwrite b
 		// Fallback for network filesystems or cross-device edge cases.
 		return copyFile(objectPath, dataPath, bs.opts.FileMode)
 	}
+	return nil
+}
+
+// placeObject places the file at tmpPath into the object store at objectPath.
+// If the object does not yet exist it creates the directory tree and renames the
+// temp file into place. If the object already exists and overwrite is true the
+// temp file replaces it; otherwise the temp file is discarded.
+func (bs *Storage) placeObject(tmpPath, objectPath string, overwrite bool) error {
+	_, statErr := os.Stat(objectPath)
+	if errors.Is(statErr, os.ErrNotExist) {
+		// First time this content is seen: move tmp into the object store.
+		if err := os.MkdirAll(filepath.Dir(objectPath), bs.opts.DirMode); err != nil {
+			return fmt.Errorf("creating object directory: %w", err)
+		}
+		if err := os.Rename(tmpPath, objectPath); err != nil {
+			return fmt.Errorf("moving temp file to object store: %w", err)
+		}
+		return nil
+	}
+	if overwrite {
+		// Content already exists, compression has changed: replace it with the temp file.
+		if err := os.Rename(tmpPath, objectPath); err != nil {
+			return fmt.Errorf("moving temp file to object store: %w", err)
+		}
+		return nil
+	}
+	// Content already exists: discard the temp file.
+	_ = os.Remove(tmpPath)
 	return nil
 }
 
