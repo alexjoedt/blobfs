@@ -600,16 +600,23 @@ func isValidKeyChar(r rune) bool {
 }
 
 // commitData places the content from tmpPath into the object store and creates
-// a hard link at dataPath. The first write of a given contentHash moves the
-// temp file into objects/; subsequent writes with the same hash discard the
-// temp file and link to the already-stored object.
+// a hard link at dataPath. The first write of a given object moves the temp
+// file into objects/; subsequent writes discard the temp file and link to the
+// already-stored object.
 //
 // Hard links keep the inode reference count accurate, enabling GC to detect
 // unreferenced objects by looking for nlink == 1.
-func (bs *Storage) commitData(tmpPath, dataPath, contentHash string, overwrite bool) error {
-	objectPath := bs.objectPath(contentHash)
-	if err := bs.placeObject(tmpPath, objectPath, overwrite); err != nil {
-		return err
+func (bs *Storage) commitData(tmpPath, dataPath, objectPath string) error {
+	if _, err := os.Stat(objectPath); err == nil {
+		// Content already exists: discard the temp file.
+		_ = os.Remove(tmpPath)
+	} else {
+		if err := os.MkdirAll(filepath.Dir(objectPath), bs.opts.DirMode); err != nil {
+			return fmt.Errorf("creating object directory: %w", err)
+		}
+		if err := os.Rename(tmpPath, objectPath); err != nil {
+			return fmt.Errorf("moving temp file to object store: %w", err)
+		}
 	}
 
 	// Hard-link the object into the ref slot (remove stale link first on overwrite).
@@ -621,41 +628,17 @@ func (bs *Storage) commitData(tmpPath, dataPath, contentHash string, overwrite b
 	return nil
 }
 
-// placeObject places the file at tmpPath into the object store at objectPath.
-// If the object does not yet exist it creates the directory tree and renames the
-// temp file into place. If the object already exists and overwrite is true the
-// temp file replaces it; otherwise the temp file is discarded.
-func (bs *Storage) placeObject(tmpPath, objectPath string, overwrite bool) error {
-	_, statErr := os.Stat(objectPath)
-	if errors.Is(statErr, os.ErrNotExist) {
-		// First time this content is seen: move tmp into the object store.
-		if err := os.MkdirAll(filepath.Dir(objectPath), bs.opts.DirMode); err != nil {
-			return fmt.Errorf("creating object directory: %w", err)
-		}
-		if err := os.Rename(tmpPath, objectPath); err != nil {
-			return fmt.Errorf("moving temp file to object store: %w", err)
-		}
-		return nil
-	}
-	if overwrite {
-		// Content already exists, compression has changed: replace it with the temp file.
-		// MkdirAll is not required here because os.Stat succeeded above, so the parent
-		// directory is guaranteed to exist.
-		if err := os.Rename(tmpPath, objectPath); err != nil {
-			return fmt.Errorf("moving temp file to object store: %w", err)
-		}
-		return nil
-	}
-	// Content already exists: discard the temp file.
-	_ = os.Remove(tmpPath)
-	return nil
-}
-
 // objectPath returns the canonical path for a content object identified by its
-// hex-encoded SHA-256 hash.
-func (bs *Storage) objectPath(contentHash string) string {
+// hex-encoded SHA-256 hash of the uncompressed content. The stored bytes depend
+// on the codec, so compressed objects carry the codec as a suffix; uncompressed
+// objects keep the bare hash for compatibility with existing stores.
+func (bs *Storage) objectPath(contentHash string, codec Codec) string {
+	name := contentHash
+	if codec != CodecNone {
+		name += "." + string(codec)
+	}
 	s1, s2 := contentHash[:2], contentHash[2:4]
-	return filepath.Join(bs.objectsDir, s1, s2, contentHash)
+	return filepath.Join(bs.objectsDir, s1, s2, name)
 }
 
 // copyFile copies src to dst with the given mode. Used as a fallback when
@@ -739,7 +722,7 @@ func (bs *Storage) Migrate(ctx context.Context) (MigrateStats, error) {
 
 		storagePath := bs.createPathFromKey(key)
 		dataPath := filepath.Join(storagePath, blobFileName)
-		objectPath := bs.objectPath(meta.Sha256)
+		objectPath := bs.objectPath(meta.Sha256, Codec(meta.Compression))
 
 		info, err := os.Lstat(dataPath)
 		if err != nil {
