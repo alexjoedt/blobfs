@@ -827,6 +827,7 @@ func (bs *Storage) GC(ctx context.Context) (GCStats, error) {
 
 		// nlink == 1: only the objects/ anchor remains; the object is orphaned.
 		size := info.Size()
+		//nolint:gosec // G122: path is inside the store-owned objects/ dir
 		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			return fmt.Errorf("removing orphaned object %q: %w", path, removeErr)
 		}
