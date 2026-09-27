@@ -302,3 +302,44 @@ func TestCompression_Dedup_CompressedContent(t *testing.T) {
 		}
 	}
 }
+
+func TestCompression_SameContentDifferentCodec(t *testing.T) {
+	// Identical content stored under different codecs must not share one
+	// object in the CAS store, regardless of which key is written first.
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	plain, err := NewStorage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plain.Put(ctx, "a.txt", strings.NewReader("shared content")); err != nil {
+		t.Fatal(err)
+	}
+
+	gz, err := NewStorage(dir, WithCompression(CodecGzip))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Put(ctx, "b.txt", strings.NewReader("shared content")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		bs  *Storage
+		key string
+	}{{plain, "a.txt"}, {gz, "b.txt"}, {plain, "b.txt"}, {gz, "a.txt"}} {
+		rc, err := tc.bs.Get(ctx, tc.key)
+		if err != nil {
+			t.Fatalf("get %s: %v", tc.key, err)
+		}
+		got, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", tc.key, err)
+		}
+		if string(got) != "shared content" {
+			t.Errorf("%s: got %q", tc.key, got)
+		}
+	}
+}

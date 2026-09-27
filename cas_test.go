@@ -73,7 +73,7 @@ func TestDedup_SameContentSingleInode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	objPath := bs.objectPath(meta.Sha256)
+	objPath := bs.objectPath(meta.Sha256, Codec(meta.Compression))
 	if n := nlink(t, objPath); n < 3 {
 		t.Errorf("expected nlink >= 3 for shared object, got %d", n)
 	}
@@ -213,7 +213,7 @@ func TestDedup_Migrate(t *testing.T) {
 	}
 
 	// Remove the object if it was created by any stray Put above.
-	_ = os.RemoveAll(bs.objectPath(meta.Sha256))
+	_ = os.RemoveAll(bs.objectPath(meta.Sha256, Codec(meta.Compression)))
 
 	stats, err := bs.Migrate(ctx)
 	if err != nil {
@@ -228,7 +228,7 @@ func TestDedup_Migrate(t *testing.T) {
 	}
 
 	// Object must now exist.
-	objPath := bs.objectPath(meta.Sha256)
+	objPath := bs.objectPath(meta.Sha256, Codec(meta.Compression))
 	if _, err := os.Stat(objPath); err != nil {
 		t.Errorf("object not created after Migrate: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestGC_RemovesOrphanedObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	objPath := bs.objectPath(meta.Sha256)
+	objPath := bs.objectPath(meta.Sha256, Codec(meta.Compression))
 
 	if err := bs.Delete(ctx, "gc/key.txt"); err != nil {
 		t.Fatal(err)
@@ -313,7 +313,7 @@ func TestGC_PreservesReferencedObject(t *testing.T) {
 	}
 
 	meta, _ := bs.Stat(ctx, "gc/keep1.txt")
-	objPath := bs.objectPath(meta.Sha256)
+	objPath := bs.objectPath(meta.Sha256, Codec(meta.Compression))
 
 	// Delete only one of the two refs.
 	if err := bs.Delete(ctx, "gc/keep1.txt"); err != nil {
